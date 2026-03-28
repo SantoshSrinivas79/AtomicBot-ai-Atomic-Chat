@@ -168,6 +168,30 @@ kill <PID>
 
 Use those if Vite says the port is already taken.
 
+### CLI model download helper
+
+The local CLI now has a direct Hugging Face download helper.
+
+From `src-tauri/`:
+
+```bash
+cargo run --features cli --bin jan-cli -- models download https://huggingface.co/janhq/Jan-v2-VL-high-4bit-mlx
+```
+
+If your installed `jan` binary is current, this also works:
+
+```bash
+jan models download janhq/Jan-v2-VL-high-4bit-mlx
+jan models download unsloth/Qwen3.5-27B-GGUF
+```
+
+Notes:
+
+- accepts either a Hugging Face URL or `owner/repo`
+- auto-detects `llamacpp` vs `mlx`
+- for GGUF repos, `--select` shows quantization choices
+- downloaded models land in the same app data folders the desktop app uses
+
 ## 6. What each major folder is for
 
 ### If you are changing UI
@@ -177,6 +201,17 @@ Go to:
 - `web-app/src/components/`
 - `web-app/src/containers/`
 - `web-app/src/routes/`
+
+For the Hub / model listing page specifically:
+
+- `web-app/src/routes/hub/index.tsx`
+- `web-app/src/routes/hub/$modelId.tsx`
+
+The Hub cards now show a copyable Hugging Face repo ID. That copied ID is meant to be directly usable in terminal commands like:
+
+```bash
+jan models download unsloth/Qwen3.5-27B-GGUF
+```
 
 ### If you are changing model request/response flow
 
@@ -257,6 +292,26 @@ macOS dev must use:
 - `src-tauri/tauri.macos.conf.json`
 
 That config now explicitly includes the MLX bundle directories.
+
+### MLX unsupported model types
+
+If MLX logs something like:
+
+```text
+Unsupported model type: qwen3_5
+```
+
+that is usually not a bad download. It means the bundled `mlx-swift-lm` in this repo does not support that architecture yet.
+
+How to think about it:
+
+- if the model folder has `config.json`, tokenizer files, and `model.safetensors` / `model.safetensors.index.json`, the import may still be fine
+- the failure happens later when the Swift MLX runtime tries to instantiate the architecture
+- fixing that requires either:
+  - using a supported MLX model
+  - or upgrading / patching the bundled MLX Swift dependencies
+
+The Rust MLX plugin now reports this more clearly instead of collapsing it into a generic process error.
 
 ## 9. Logs that look scary but are not bugs
 
