@@ -200,11 +200,28 @@ pub fn migrate_mcp_servers(
     }
     if mcp_version < 3 {
         log::info!("Migrating MCP schema version 3: Updating Exa to streamable HTTP");
-        if let Err(e) = migrate_exa_to_http(app_handle) {
+        if let Err(e) = migrate_exa_to_http(app_handle.clone()) {
             log::error!("Failed to migrate Exa to HTTP: {e}");
         }
     }
-    store.set("mcp_version", 3);
+    if mcp_version < 4 {
+        log::info!("Migrating MCP schema version 4: Adding Local Browser MCP");
+        let result = add_server_config(
+            app_handle.clone(),
+            "Local Browser MCP".to_string(),
+            serde_json::json!({
+                "command": "npx",
+                "args": ["-y", "@playwright/mcp@latest"],
+                "env": {},
+                "active": false,
+                "official": true
+            }),
+        );
+        if let Err(e) = result {
+            log::error!("Failed to add Local Browser MCP server config: {e}");
+        }
+    }
+    store.set("mcp_version", 4);
     store.save().expect("Failed to save store");
     Ok(())
 }

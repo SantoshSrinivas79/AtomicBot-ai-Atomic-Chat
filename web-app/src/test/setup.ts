@@ -5,6 +5,24 @@ import * as matchers from '@testing-library/jest-dom/matchers'
 // extends Vitest's expect method with methods from react-testing-library
 expect.extend(matchers)
 
+const mockMcpService = {
+  updateMCPConfig: vi.fn().mockResolvedValue(undefined),
+  restartMCPServers: vi.fn().mockResolvedValue(undefined),
+  getMCPConfig: vi.fn().mockResolvedValue({}),
+  getTools: vi.fn().mockResolvedValue([]),
+  getConnectedServers: vi.fn().mockResolvedValue([]),
+  callTool: vi.fn().mockResolvedValue({ error: '', content: [] }),
+  callToolWithCancellation: vi.fn().mockReturnValue({
+    promise: Promise.resolve({ error: '', content: [] }),
+    cancel: vi.fn().mockResolvedValue(undefined),
+    token: 'test-token'
+  }),
+  cancelToolCall: vi.fn().mockResolvedValue(undefined),
+  activateMCPServer: vi.fn().mockResolvedValue(undefined),
+  deactivateMCPServer: vi.fn().mockResolvedValue(undefined),
+  checkJanBrowserExtensionConnected: vi.fn().mockResolvedValue(false),
+}
+
 // Create a mock ServiceHub
 const mockServiceHub = {
   theme: () => ({
@@ -54,22 +72,7 @@ const mockServiceHub = {
     getMessage: vi.fn().mockResolvedValue(null),
     fetchMessages: vi.fn().mockResolvedValue([]),
   }),
-  mcp: () => ({
-    updateMCPConfig: vi.fn().mockResolvedValue(undefined),
-    restartMCPServers: vi.fn().mockResolvedValue(undefined),
-    getMCPConfig: vi.fn().mockResolvedValue({}),
-    getTools: vi.fn().mockResolvedValue([]),
-    getConnectedServers: vi.fn().mockResolvedValue([]),
-    callTool: vi.fn().mockResolvedValue({ error: '', content: [] }),
-    callToolWithCancellation: vi.fn().mockReturnValue({
-      promise: Promise.resolve({ error: '', content: [] }),
-      cancel: vi.fn().mockResolvedValue(undefined),
-      token: 'test-token'
-    }),
-    cancelToolCall: vi.fn().mockResolvedValue(undefined),
-    activateMCPServer: vi.fn().mockResolvedValue(undefined),
-    deactivateMCPServer: vi.fn().mockResolvedValue(undefined),
-  }),
+  mcp: () => mockMcpService,
   threads: () => ({
     createThread: vi.fn().mockResolvedValue({ id: 'test-thread', messages: [] }),
     deleteThread: vi.fn().mockResolvedValue(undefined),

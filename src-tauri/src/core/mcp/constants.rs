@@ -16,6 +16,13 @@ pub const DEFAULT_MCP_CONFIG: &str = r#"{
       "active": false,
       "official": true
     },
+    "Local Browser MCP": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
+      "env": {},
+      "active": false,
+      "official": true
+    },
     "exa": {
       "type": "http",
       "url": "https://mcp.exa.ai/mcp",

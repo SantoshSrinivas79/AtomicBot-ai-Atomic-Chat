@@ -11,6 +11,10 @@
       "getExtension": "Get Extension"
     }
   },
+  "browserPreference": {
+    "title": "Prefer Local Playwright Browser",
+    "description": "Use the built-in Playwright browser tools first. If local Playwright fails, Atomic Bot will still fall back to the browser extension."
+  },
   "serverName": "Server Name",
   "enterServerName": "Enter server name",
   "command": "Command",

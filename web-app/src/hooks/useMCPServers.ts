@@ -7,6 +7,7 @@ export type MCPServerConfig = {
   args: string[]
   env: Record<string, string>
   active?: boolean
+  preferred?: boolean
   type?: 'stdio' | 'http' | 'sse'
   url?: string
   headers?: Record<string, string>

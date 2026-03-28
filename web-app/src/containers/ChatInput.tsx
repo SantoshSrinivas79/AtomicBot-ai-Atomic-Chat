@@ -11,8 +11,10 @@ import {
 } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -30,6 +32,7 @@ import {
   IconLoader2,
   IconWorld,
   IconUser,
+  IconBrandChrome,
 } from '@tabler/icons-react'
 import { BotIcon } from 'lucide-react'
 import { useTranslation } from '@/i18n/react-i18next-compat'
@@ -81,7 +84,10 @@ import {
   createDocumentAttachment,
 } from '@/types/attachment'
 import JanBrowserExtensionDialog from '@/containers/dialogs/JanBrowserExtensionDialog'
-import { useJanBrowserExtension } from '@/hooks/useJanBrowserExtension'
+import {
+  type BrowserProviderPreference,
+  useJanBrowserExtension,
+} from '@/hooks/useJanBrowserExtension'
 import { PromptVisionModel } from '@/containers/PromptVisionModel'
 import { useAgentMode } from '@/hooks/useAgentMode'
 
@@ -120,6 +126,7 @@ const ChatInput = memo(function ChatInput({
   const setPrompt = usePrompt((state) => state.setPrompt)
   const currentThreadId = useThreads((state) => state.currentThreadId)
   const currentThread = useThreads((state) => state.getCurrentThread())
+  const updateThread = useThreads((state) => state.updateThread)
   const updateCurrentThreadAssistant = useThreads(
     (state) => state.updateCurrentThreadAssistant
   )
@@ -170,19 +177,24 @@ const ChatInput = memo(function ChatInput({
   const [selectedAssistant, setSelectedAssistant] = useState<Assistant | undefined>(
     () => assistants.find((a) => a.id === defaultAssistantId) ?? assistants[0]
   )
+  const currentThreadBrowserPreference = currentThread?.metadata?.browserProviderPreference as
+    | BrowserProviderPreference
+    | undefined
+  const preferLocalBrowserForThread = currentThreadBrowserPreference === 'local'
 
   // No auto-selection: let the user explicitly pick an assistant
 
   // Jan Browser Extension hook
   const {
-    //! при возврате кнопки Browse: hasConfig: hasJanBrowserMCPConfig, isLoading: isJanBrowserMCPLoading,
+    hasConfig: hasBrowserMCPConfig,
     isActive: janBrowserMCPActive,
+    isLoading: isJanBrowserMCPLoading,
     dialogOpen: extensionDialogOpen,
     dialogState: extensionDialogState,
     toggleBrowser: handleBrowseClick,
     handleCancel: handleExtensionDialogCancel,
     setDialogOpen: setExtensionDialogOpen,
-  } = useJanBrowserExtension()
+  } = useJanBrowserExtension(currentThreadBrowserPreference)
 
   // Check if model supports browser feature (requires both vision and tools)
   const modelSupportsBrowser = useMemo(() => {
@@ -190,12 +202,16 @@ const ChatInput = memo(function ChatInput({
     return capabilities.includes('vision') && capabilities.includes('tools')
   }, [selectedModel?.capabilities])
 
-  // Auto-disable browser feature when model doesn't support it
-  useEffect(() => {
-    if (janBrowserMCPActive && !modelSupportsBrowser) {
-      handleBrowseClick()
-    }
-  }, [janBrowserMCPActive, modelSupportsBrowser, handleBrowseClick])
+  const setBrowserPreferenceForCurrentThread = useCallback((checked: boolean) => {
+    if (!currentThreadId || !currentThread) return
+
+    updateThread(currentThreadId, {
+      metadata: {
+        ...currentThread.metadata,
+        browserProviderPreference: checked ? 'local' : 'extension',
+      },
+    })
+  }, [currentThread, currentThreadId, updateThread])
 
   const attachmentsEnabled = useAttachments((s) => s.enabled)
   const parsePreference = useAttachments((s) => s.parseMode)
@@ -1739,49 +1755,68 @@ const ChatInput = memo(function ChatInput({
                     useLastUsedModel={initialMessage}
                   />
                 )} */}
-                {/* //! Кнопка Browse (Chrome) — временно скрыта
-                {!effectiveAgentMode && hasJanBrowserMCPConfig && modelSupportsBrowser && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        disabled={isJanBrowserMCPLoading}
-                        className={cn(janBrowserMCPActive && "text-primary")}
-                        onClick={
-                          isJanBrowserMCPLoading
-                            ? undefined
-                            : handleBrowseClick
-                        }
-                      >
-                        {isJanBrowserMCPLoading ? (
-                          <IconLoader2
-                            size={18}
-                            className="text-primary animate-spin"
-                          />
-                        ) : (
-                          <IconBrandChrome
-                            size={18}
-                            className={cn(
-                              'text-muted-foreground',
-                              janBrowserMCPActive && 'text-primary'
+                {!effectiveAgentMode && hasBrowserMCPConfig && modelSupportsBrowser && (
+                  <DropdownMenu>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            disabled={isJanBrowserMCPLoading}
+                            className={cn(janBrowserMCPActive && 'text-primary')}
+                          >
+                            {isJanBrowserMCPLoading ? (
+                              <IconLoader2
+                                size={18}
+                                className="text-primary animate-spin"
+                              />
+                            ) : (
+                              <IconBrandChrome
+                                size={18}
+                                className={cn(
+                                  'text-muted-foreground',
+                                  janBrowserMCPActive && 'text-primary'
+                                )}
+                              />
                             )}
-                          />
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>
-                        {isJanBrowserMCPLoading
-                          ? 'Starting...'
-                          : janBrowserMCPActive
-                            ? 'Browse (Active)'
-                            : 'Browse'}
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
+                          </Button>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>
+                          {isJanBrowserMCPLoading
+                            ? 'Starting browser tools...'
+                            : janBrowserMCPActive
+                              ? 'Browser tools active'
+                              : 'Browser tools'}
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <DropdownMenuContent align="start" className="w-56">
+                      <DropdownMenuItem
+                        onSelect={(event) => {
+                          event.preventDefault()
+                          if (!isJanBrowserMCPLoading) {
+                            void handleBrowseClick()
+                          }
+                        }}
+                      >
+                        {janBrowserMCPActive
+                          ? 'Disable browser tools'
+                          : 'Enable browser tools'}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuCheckboxItem
+                        checked={preferLocalBrowserForThread}
+                        disabled={!currentThreadId}
+                        onCheckedChange={setBrowserPreferenceForCurrentThread}
+                      >
+                        Prefer local Playwright for this chat
+                      </DropdownMenuCheckboxItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
-                */}
 
                 {!effectiveAgentMode && selectedModel?.capabilities?.includes('embeddings') && (
                   <Tooltip>

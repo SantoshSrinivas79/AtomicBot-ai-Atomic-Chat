@@ -34,6 +34,7 @@ import { cn } from '@/lib/utils'
 
 //! Совпадает с useJanBrowserExtension; скрыто вместе с кнопкой Browse в чате
 const JAN_BROWSER_MCP_SERVER_KEY = 'Jan Browser MCP'
+const LOCAL_BROWSER_MCP_SERVER_KEY = 'Local Browser MCP'
 
 // Function to mask sensitive URL parameters
 const maskSensitiveUrl = (url: string) => {
@@ -145,6 +146,17 @@ function MCPServersDesktop() {
       ),
     [mcpServers]
   )
+  const localBrowserConfig = mcpServers[LOCAL_BROWSER_MCP_SERVER_KEY]
+
+  const toggleLocalBrowserPreference = (checked: boolean) => {
+    if (!localBrowserConfig) return
+
+    editServer(LOCAL_BROWSER_MCP_SERVER_KEY, {
+      ...localBrowserConfig,
+      preferred: checked,
+    })
+    void syncServers()
+  }
 
   const updateToolCallTimeout = (rawValue: string) => {
     if (rawValue === '') {
@@ -472,6 +484,20 @@ function MCPServersDesktop() {
                     />
                   }
                 />
+                {localBrowserConfig && (
+                  <CardItem
+                    title={t('mcp-servers:browserPreference.title')}
+                    description={t('mcp-servers:browserPreference.description')}
+                    actions={
+                      <div className="shrink-0 ml-4">
+                        <Switch
+                          checked={localBrowserConfig.preferred ?? false}
+                          onCheckedChange={toggleLocalBrowserPreference}
+                        />
+                      </div>
+                    }
+                  />
+                )}
               </Card>
 
               {visibleMcpServerEntries.length === 0 ? (
