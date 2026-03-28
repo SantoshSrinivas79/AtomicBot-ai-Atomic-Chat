@@ -121,9 +121,9 @@ const providerMetadataExtractor: MetadataExtractor = {
  * Create a custom fetch function that injects additional parameters into the request body
  */
 function createCustomFetch(
-  baseFetch: typeof httpFetch,
+  baseFetch: typeof fetch,
   parameters: Record<string, unknown>
-): typeof httpFetch {
+): typeof fetch {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     // Only transform POST requests with JSON body
     if (init?.method === 'POST' || !init?.method) {
@@ -139,6 +139,72 @@ function createCustomFetch(
     }
 
     return baseFetch(input, init)
+  }
+}
+
+/**
+ * For remote providers, prefer the browser fetch implementation and fall back
+ * to Tauri's reqwest-backed fetch if the browser request fails. This avoids
+ * provider-specific hangs we have seen with the Tauri HTTP plugin while still
+ * keeping a non-CORS fallback path available.
+ */
+function createRemoteFetch(
+  fallbackFetch: typeof httpFetch,
+  parameters: Record<string, unknown>,
+  provider?: ProviderObject
+): typeof fetch {
+  const tauriFetch = createCustomFetch(
+    fallbackFetch as unknown as typeof fetch,
+    parameters
+  )
+  const browserFetch = createCustomFetch(fetch, parameters)
+
+  return async (
+    input: RequestInfo | URL,
+    init?: RequestInit
+  ): Promise<Response> => {
+    const urlStr =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url
+
+    const isLocal =
+      urlStr.startsWith('http://localhost:') ||
+      urlStr.startsWith('http://127.0.0.1:')
+
+    if (isLocal) {
+      return tauriFetch(input, init)
+    }
+
+    try {
+      if (provider?.provider === 'openrouter') {
+        console.info('[OpenRouter] Sending remote request', {
+          url: urlStr,
+          method: init?.method ?? 'POST',
+          hasBody: Boolean(init?.body),
+        })
+      }
+
+      const response = await browserFetch(input, init)
+
+      if (provider?.provider === 'openrouter') {
+        console.info('[OpenRouter] Remote response received', {
+          url: urlStr,
+          status: response.status,
+          ok: response.ok,
+        })
+      }
+
+      return response
+    } catch (error) {
+      console.warn(
+        `Browser fetch failed for ${provider?.provider ?? 'remote provider'}, falling back to Tauri fetch:`,
+        error
+      )
+      return tauriFetch(input, init)
+    }
   }
 }
 
@@ -670,12 +736,25 @@ export class ModelFactory {
       headers['Authorization'] = `Bearer ${provider.api_key}`
     }
 
+    if (provider.provider === 'openrouter') {
+      headers['HTTP-Referer'] = 'https://jan.ai'
+      headers['X-Title'] = 'Atomic Bot'
+
+      console.info('[OpenRouter] Creating chat model', {
+        modelId,
+        baseUrl: provider.base_url || 'https://api.openai.com/v1',
+        hasApiKey: Boolean(provider.api_key),
+        registeredModelCount: provider.models.length,
+        hasOpenrouterFree: provider.models.some((model) => model.id === 'openrouter/free'),
+      })
+    }
+
     const openAICompatible = createOpenAICompatible({
       name: provider.provider,
       baseURL: provider.base_url || 'https://api.openai.com/v1',
       headers,
       includeUsage: true,
-      fetch: createCustomFetch(httpFetch, parameters),
+      fetch: createRemoteFetch(httpFetch, parameters, provider),
     })
 
     return openAICompatible.languageModel(modelId)
