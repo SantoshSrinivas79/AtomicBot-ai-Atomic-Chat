@@ -8,6 +8,7 @@ pub enum ErrorCode {
     ModelLoadFailed,
     ModelLoadTimedOut,
     OutOfMemory,
+    UnsupportedModelType,
     MlxProcessError,
     IoError,
     InternalError,
@@ -46,12 +47,34 @@ impl MlxError {
             );
         }
 
+        if let Some(model_type) = extract_unsupported_model_type(stderr) {
+            return Self::new(
+                ErrorCode::UnsupportedModelType,
+                format!(
+                    "Unsupported MLX model type: {model_type}. The bundled MLX runtime in Atomic Chat does not support this architecture yet."
+                ),
+                Some(stderr.into()),
+            );
+        }
+
         Self::new(
             ErrorCode::MlxProcessError,
             "The MLX model process encountered an unexpected error.".into(),
             Some(stderr.into()),
         )
     }
+}
+
+fn extract_unsupported_model_type(stderr: &str) -> Option<String> {
+    stderr.lines().find_map(|line| {
+        let marker = "Unsupported model type:";
+        line.find(marker).map(|idx| {
+            line[idx + marker.len()..]
+                .trim()
+                .trim_matches('"')
+                .to_string()
+        }).filter(|value| !value.is_empty())
+    })
 }
 
 #[derive(Debug, thiserror::Error)]

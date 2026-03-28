@@ -20,6 +20,8 @@ import { useResolvedRecommendedModels } from '@/hooks/useResolvedRecommendedMode
 import {
   IconChevronDown,
   IconChevronUp,
+  IconCopy,
+  IconCopyCheck,
   IconDownload,
   IconFileCode,
   IconEye,
@@ -58,9 +60,64 @@ import {
 } from '@/constants/models'
 import { Button } from '@/components/ui/button'
 import { RenderMarkdown } from '@/containers/RenderMarkdown'
+import { toast } from 'sonner'
 
 type SearchParams = {
   repo: string
+}
+
+function getHubRepoId(model: CatalogModel): string {
+  if (model.model_name.includes('/')) {
+    return model.model_name
+  }
+
+  return model.developer
+    ? `${model.developer}/${model.model_name}`
+    : model.model_name
+}
+
+function RepoIdCopyChip({ repoId }: { repoId: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const copyRepoId = async (e: React.MouseEvent | React.KeyboardEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    try {
+      await navigator.clipboard.writeText(repoId)
+      setCopied(true)
+      toast.success('Repo ID copied', {
+        description: repoId,
+      })
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch (error) {
+      console.error('Failed to copy repo ID:', error)
+      toast.error('Failed to copy repo ID', {
+        description: repoId,
+      })
+    }
+  }
+
+  return (
+    <button
+      className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/60 bg-secondary/35 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary/60"
+      onClick={copyRepoId}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          void copyRepoId(e)
+        }
+      }}
+      title={`Copy repo ID: ${repoId}`}
+      type="button"
+    >
+      <code className="truncate text-[11px]">{repoId}</code>
+      {copied ? (
+        <IconCopyCheck size={14} className="shrink-0 text-primary" />
+      ) : (
+        <IconCopy size={14} className="shrink-0" />
+      )}
+    </button>
+  )
 }
 
 export const Route = createFileRoute(route.hub.index as any)({
@@ -619,6 +676,7 @@ function HubContent() {
                               }
                             />
                           </div>
+                          <RepoIdCopyChip repoId={getHubRepoId(model)} />
                           <div
                             className="flex items-center gap-2 mt-2 cursor-pointer"
                             onClick={goToModel}
@@ -1035,6 +1093,11 @@ function HubContent() {
                             }
                           />
                         </div>
+                        <RepoIdCopyChip
+                          repoId={getHubRepoId(
+                            virtualListModels[virtualItem.index]
+                          )}
+                        />
                         <div className="flex items-center gap-2 mt-2">
                           <span className="capitalize text-foreground">
                             {t('hub:by')}{' '}
