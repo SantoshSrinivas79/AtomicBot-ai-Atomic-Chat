@@ -5,6 +5,15 @@ import { Button } from '@/components/ui/button'
 import { IconChevronDown, IconLoader2, IconRefresh } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/i18n/react-i18next-compat'
+import type { ProviderModelOption } from '@/services/providers/types'
+
+type ModelOption = string | ProviderModelOption
+
+const getModelId = (model: ModelOption) =>
+  typeof model === 'string' ? model : model.id
+
+const getModelLabel = (model: ModelOption) =>
+  typeof model === 'string' ? model : model.name || model.id
 
 // Hook for the dropdown position
 function useDropdownPosition(
@@ -111,31 +120,42 @@ const ModelsList = ({
   onModelSelect,
   onHighlight,
 }: {
-  filteredModels: string[]
+  filteredModels: ModelOption[]
   value: string
   highlightedIndex: number
   onModelSelect: (model: string) => void
   onHighlight: (index: number) => void
 }) => (
   <>
-    {filteredModels.map((model, index) => (
+    {filteredModels.map((model, index) => {
+      const modelId = getModelId(model)
+      const modelLabel = getModelLabel(model)
+      return (
       <div
-        key={model}
-        data-model={model}
+        key={modelId}
+        data-model={modelId}
         onClick={(e) => {
           e.stopPropagation()
-          onModelSelect(model)
+          onModelSelect(modelId)
         }}
         onMouseEnter={() => onHighlight(index)}
         className={cn(
           'cursor-pointer mx-3 px-2 rounded-md py-2 bg-background z-20 transition-all duration-200',
-          value === model && 'bg-secondary shadow-sm',
+          value === modelId && 'bg-secondary shadow-sm',
           highlightedIndex === index && ' bg-secondary'
         )}
       >
-        <span className="text-sm truncate text-foreground">{model}</span>
+        <div className="min-w-0">
+          <div className="text-sm truncate text-foreground">{modelLabel}</div>
+          {modelLabel !== modelId && (
+            <div className="text-xs truncate text-muted-foreground">
+              {modelId}
+            </div>
+          )}
+        </div>
       </div>
-    ))}
+      )
+    })}
   </>
 )
 
@@ -143,8 +163,8 @@ const ModelsList = ({
 function useKeyboardNavigation(
   open: boolean,
   setOpen: React.Dispatch<React.SetStateAction<boolean>>,
-  models: string[],
-  filteredModels: string[],
+  models: ModelOption[],
+  filteredModels: ModelOption[],
   highlightedIndex: number,
   setHighlightedIndex: React.Dispatch<React.SetStateAction<number>>,
   onModelSelect: (model: string) => void,
@@ -210,7 +230,7 @@ function useKeyboardNavigation(
             highlightedIndex >= 0 &&
             highlightedIndex < filteredModels.length
           ) {
-            onModelSelect(filteredModels[highlightedIndex])
+            onModelSelect(getModelId(filteredModels[highlightedIndex]))
           }
           break
         case 'Escape':
@@ -246,7 +266,7 @@ function useKeyboardNavigation(
 type ModelComboboxProps = {
   value: string
   onChange: (value: string) => void
-  models: string[]
+  models: ModelOption[]
   loading?: boolean
   error?: string | null
   onRefresh?: () => void
@@ -293,7 +313,14 @@ export function ModelCombobox({
   const filteredModels = useMemo(() => {
     if (!inputValue.trim()) return models
     const searchValue = inputValue.toLowerCase()
-    return models.filter((model) => model.toLowerCase().includes(searchValue))
+    return models.filter((model) => {
+      const modelId = getModelId(model).toLowerCase()
+      const modelLabel = getModelLabel(model).toLowerCase()
+      return (
+        modelId.includes(searchValue) ||
+        modelLabel.includes(searchValue)
+      )
+    })
   }, [models, inputValue])
 
   // Reset highlighted index when filtered models change

@@ -209,15 +209,15 @@ function ProviderDetail() {
 
     setRefreshingModels(true)
     try {
-      const modelIds = await serviceHub
+      const providerModels = await serviceHub
         .providers()
         .fetchModelsFromProvider(provider)
 
-      // Create new models from the fetched IDs
-      const newModels: Model[] = modelIds.map((id) => ({
+      // Create new models from the fetched provider models
+      const newModels: Model[] = providerModels.map(({ id, name }) => ({
         id,
         model: id,
-        name: id,
+        name: name || id,
         capabilities: ['completion'], // Default capability
         version: '1.0',
       }))

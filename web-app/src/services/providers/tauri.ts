@@ -11,11 +11,50 @@ import { ExtensionManager } from '@/lib/extension'
 import { fetch as fetchTauri } from '@tauri-apps/plugin-http'
 import { DefaultProvidersService } from './default'
 import { getModelCapabilities } from '@/lib/models'
+import type { ProviderModelOption } from './types'
 
 export class TauriProvidersService extends DefaultProvidersService {
   fetch(): typeof fetch {
     // Tauri implementation uses Tauri's fetch to avoid CORS issues
     return fetchTauri as typeof fetch
+  }
+
+  private async fetchProviderModels(
+    provider: ModelProvider,
+    headers: Record<string, string>
+  ) {
+    const isLocalProvider =
+      provider.base_url?.includes('localhost:') ||
+      provider.base_url?.includes('127.0.0.1:')
+
+    if (isLocalProvider) {
+      return fetchTauri(`${provider.base_url}/models`, {
+        method: 'GET',
+        headers,
+      })
+    }
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15000)
+
+    try {
+      return await fetch(`${provider.base_url}/models`, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      })
+    } catch (error) {
+      console.warn(
+        `Browser fetch failed for ${provider.provider} models, falling back to Tauri fetch:`,
+        error
+      )
+      return await fetchTauri(`${provider.base_url}/models`, {
+        method: 'GET',
+        headers,
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
   }
 
   async getProviders(): Promise<ModelProvider[]> {
@@ -131,7 +170,7 @@ export class TauriProvidersService extends DefaultProvidersService {
     }
   }
 
-  async fetchModelsFromProvider(provider: ModelProvider): Promise<string[]> {
+  async fetchModelsFromProvider(provider: ModelProvider): Promise<ProviderModelOption[]> {
     if (!provider.base_url) {
       throw new Error('Provider must have base_url configured')
     }
@@ -163,10 +202,7 @@ export class TauriProvidersService extends DefaultProvidersService {
       }
 
       // Always use Tauri's fetch to avoid CORS issues
-      const response = await fetchTauri(`${provider.base_url}/models`, {
-        method: 'GET',
-        headers,
-      })
+      const response = await this.fetchProviderModels(provider, headers)
 
       if (!response.ok) {
         // Provide more specific error messages based on status code (aligned with web implementation)
@@ -193,24 +229,44 @@ export class TauriProvidersService extends DefaultProvidersService {
 
       // Handle different response formats that providers might use
       if (data.data && Array.isArray(data.data)) {
-        // OpenAI format: { data: [{ id: "model-id" }, ...] }
+        // OpenAI format: { data: [{ id: "model-id", name?: "Model Name" }, ...] }
         return data.data
-          .map((model: { id: string }) => model.id)
-          .filter(Boolean)
+          .map((model: { id?: string; name?: string }) =>
+            model.id
+              ? { id: model.id, name: model.name || model.id }
+              : null
+          )
+          .filter((model): model is ProviderModelOption => model !== null)
       } else if (Array.isArray(data)) {
         // Direct array format: ["model-id1", "model-id2", ...]
         return data
-          .filter(Boolean)
-          .map((model) =>
-            typeof model === 'object' && 'id' in model ? model.id : model
-          )
+          .map((model) => {
+            if (!model) return null
+            if (typeof model === 'string') {
+              return { id: model, name: model }
+            }
+            if (typeof model === 'object' && 'id' in model) {
+              const typedModel = model as { id?: string; name?: string }
+              if (!typedModel.id) return null
+              return {
+                id: typedModel.id,
+                name: typedModel.name || typedModel.id,
+              }
+            }
+            return null
+          })
+          .filter((model): model is ProviderModelOption => model !== null)
       } else if (data.models && Array.isArray(data.models)) {
         // Alternative format: { models: [...] }
         return data.models
-          .map((model: string | { id: string }) =>
-            typeof model === 'string' ? model : model.id
-          )
-          .filter(Boolean)
+          .map((model: string | { id?: string; name?: string }) => {
+            if (typeof model === 'string') {
+              return { id: model, name: model }
+            }
+            if (!model.id) return null
+            return { id: model.id, name: model.name || model.id }
+          })
+          .filter((model): model is ProviderModelOption => model !== null)
       } else {
         console.warn('Unexpected response format from provider API:', data)
         return []

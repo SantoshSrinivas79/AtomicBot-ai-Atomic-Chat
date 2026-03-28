@@ -9,7 +9,7 @@ export class DefaultProvidersService implements ProvidersService {
     return []
   }
 
-  async fetchModelsFromProvider(provider: ModelProvider): Promise<string[]> {
+  async fetchModelsFromProvider(provider: ModelProvider): Promise<Array<{ id: string; name: string }>> {
     console.log('fetchModelsFromProvider called with provider:', provider)
     return []
   }

@@ -1,19 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useServiceHub } from './useServiceHub'
+import type { ProviderModelOption } from '@/services/providers/types'
 
 type UseProviderModelsState = {
-  models: string[]
+  models: ProviderModelOption[]
   loading: boolean
   error: string | null
   refetch: () => void
 }
 
-const modelsCache = new Map<string, { models: string[]; timestamp: number }>()
+const modelsCache = new Map<string, { models: ProviderModelOption[]; timestamp: number }>()
 const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
 
 export const useProviderModels = (provider?: ModelProvider): UseProviderModelsState => {
   const serviceHub = useServiceHub()
-  const [models, setModels] = useState<string[]>([])
+  const [models, setModels] = useState<ProviderModelOption[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const prevProviderKey = useRef<string>('')
@@ -53,7 +54,9 @@ export const useProviderModels = (provider?: ModelProvider): UseProviderModelsSt
     try {
       const fetchedModels = await serviceHub.providers().fetchModelsFromProvider(provider)
       if (currentRequestId !== requestIdRef.current) return
-      const sortedModels = fetchedModels.sort((a, b) => a.localeCompare(b))
+      const sortedModels = [...fetchedModels].sort((a, b) =>
+        (a.name || a.id).localeCompare(b.name || b.id)
+      )
 
       setModels(sortedModels)
 

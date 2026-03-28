@@ -23,7 +23,11 @@ describe('useProviderModels', () => {
     models: [],
   }
 
-  const mockModels = ['gpt-4', 'gpt-3.5-turbo', 'gpt-4-turbo']
+  const mockModels = [
+    { id: 'gpt-4', name: 'GPT-4' },
+    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
+    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+  ]
 
   let fetchModelsSpy: ReturnType<typeof vi.fn>
 
@@ -64,7 +68,11 @@ describe('useProviderModels', () => {
     const { result } = renderHook(() => useProviderModels(mockProvider))
 
     await waitFor(() => {
-      expect(result.current.models).toEqual(['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo'])
+      expect(result.current.models).toEqual([
+        { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
+        { id: 'gpt-4', name: 'GPT-4' },
+        { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+      ])
     })
 
     expect(result.current.error).toBe(null)
@@ -80,7 +88,11 @@ describe('useProviderModels', () => {
     )
 
     await waitFor(() => {
-      expect(result.current.models).toEqual(['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo'])
+      expect(result.current.models).toEqual([
+        { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
+        { id: 'gpt-4', name: 'GPT-4' },
+        { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+      ])
       expect(result.current.loading).toBe(false)
     }, { timeout: 500 })
 
