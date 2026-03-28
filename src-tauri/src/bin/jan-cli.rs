@@ -13,12 +13,12 @@ use indicatif::{ProgressBar, ProgressStyle};
 // Import the library crate so we can access core modules.
 // The lib target is named "app_lib" (see [lib] section in Cargo.toml).
 use app_lib::core::cli::{
-    cli_delete_thread, cli_get_config, cli_get_data_folder, cli_get_thread,
+    cli_delete_thread, cli_get_data_folder, cli_get_thread,
     cli_list_messages, cli_list_threads, discover_llamacpp_binary,
-    discover_mlx_binary, download_hf_model, fetch_hf_gguf_files, init_llamacpp_state,
-    init_mlx_state, list_models, load_llama_model_impl, load_mlx_model_impl,
-    looks_like_hf_repo, resolve_model_by_id, resolve_model_engine, HfFileInfo,
-    LlamacppConfig, MlxConfig,
+    discover_mlx_binary, download_hf_model, download_hf_mlx_model, fetch_hf_gguf_files,
+    fetch_hf_repo_files, init_llamacpp_state, init_mlx_state, list_models,
+    load_llama_model_impl, load_mlx_model_impl, looks_like_hf_repo, normalize_hf_repo_id,
+    resolve_model_by_id, resolve_model_engine, HfFileInfo, LlamacppConfig, MlxConfig,
 };
 use std::path::PathBuf;
 
@@ -39,7 +39,8 @@ Models downloaded in the Jan desktop app are automatically available here.",
   jan serve janhq/Jan-code-4b-gguf                       # expose a model at localhost:6767/v1\n  \
   jan serve janhq/Jan-code-4b-gguf --fit                 # auto-fit context to available VRAM\n  \
   jan serve janhq/Jan-code-4b-gguf --detach              # run in the background\n  \
-  jan models list                                        # show all installed models",
+  jan models list                                        # show all installed models\n  \
+  jan models download https://huggingface.co/janhq/Jan-v2-VL-high-4bit-mlx",
     version
 )]
 struct Cli {
@@ -224,6 +225,17 @@ enum ModelsCommands {
         /// API key required by clients (sets MLX_API_KEY on the server)
         #[arg(long, default_value = "")]
         api_key: String,
+    },
+    /// Download a Hugging Face model repo into the Jan data folder
+    Download {
+        /// Hugging Face repo URL or repo ID, e.g. `janhq/Jan-v2-VL-high-4bit-mlx`
+        repo: String,
+        /// Engine to download for: auto, llamacpp, or mlx
+        #[arg(long, default_value = "auto")]
+        engine: String,
+        /// For GGUF repos, show a quantization picker instead of auto-selecting
+        #[arg(long, default_value_t = false)]
+        select: bool,
     },
 }
 
@@ -429,6 +441,162 @@ async fn handle_models(cmd: ModelsCommands) {
                     );
                     std::process::exit(1);
                 }
+            }
+        }
+
+        ModelsCommands::Download { repo, engine, select } => {
+            let normalized_repo = normalize_hf_repo_id(&repo);
+            if !looks_like_hf_repo(&normalized_repo) {
+                eprintln!(
+                    "Error: '{repo}' is not a valid Hugging Face repo ID or URL."
+                );
+                std::process::exit(1);
+            }
+
+            let token = hf_token();
+            let tok_ref = token.as_deref();
+            let repo_files = fetch_hf_repo_files(&normalized_repo, tok_ref)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                });
+
+            let has_gguf = repo_files
+                .iter()
+                .any(|file| file.filename.to_lowercase().ends_with(".gguf"));
+            let has_mlx = repo_files.iter().any(|file| {
+                let name = file.filename.to_lowercase();
+                name == "config.json"
+                    || name.ends_with(".safetensors")
+                    || name == "model.safetensors.index.json"
+            });
+
+            let resolved_engine = match engine.as_str() {
+                "auto" => {
+                    if has_gguf {
+                        "llamacpp"
+                    } else if has_mlx {
+                        "mlx"
+                    } else {
+                        eprintln!(
+                            "Error: could not detect a supported engine for '{normalized_repo}'."
+                        );
+                        std::process::exit(1);
+                    }
+                }
+                "llamacpp" | "mlx" => engine.as_str(),
+                other => {
+                    eprintln!("Error: unsupported engine '{other}'. Use auto, llamacpp, or mlx.");
+                    std::process::exit(1);
+                }
+            };
+
+            match resolved_engine {
+                "llamacpp" => {
+                    let files = fetch_hf_gguf_files(&normalized_repo, tok_ref)
+                        .await
+                        .unwrap_or_else(|e| {
+                            eprintln!("Error: {e}");
+                            std::process::exit(1);
+                        });
+
+                    let chosen = if select {
+                        pick_hf_file(&files)
+                    } else {
+                        files
+                            .iter()
+                            .find(|f| f.filename.contains("Q4_K_XL"))
+                            .unwrap_or_else(|| files.iter().max_by_key(|f| f.size).unwrap())
+                    };
+
+                    eprintln!("  Downloading  {}", chosen.filename);
+                    eprintln!("  Size         {}", fmt_bytes(chosen.size));
+                    eprintln!();
+
+                    let dl_pb = ProgressBar::new(chosen.size);
+                    dl_pb.set_style(
+                        ProgressStyle::default_bar()
+                            .template(
+                                "  {bar:45.yellow/dim}  {bytes:>9}/{total_bytes}  {bytes_per_sec}  eta {eta}",
+                            )
+                            .unwrap()
+                            .progress_chars("█▉▊▋▌▍▎▏  "),
+                    );
+
+                    let dl_pb_clone = dl_pb.clone();
+                    let model_id = download_hf_model(&normalized_repo, chosen, tok_ref, move |done, _total| {
+                        dl_pb_clone.set_position(done);
+                    })
+                    .await
+                    .unwrap_or_else(|e| {
+                        dl_pb.finish_with_message(format!("✗ Download failed: {e}"));
+                        std::process::exit(1);
+                    });
+
+                    dl_pb.finish_and_clear();
+                    eprintln!("  ✓ Downloaded GGUF model to Jan data folder\n");
+                    println!("{model_id}");
+                }
+                "mlx" => {
+                    let selected_files = repo_files
+                        .iter()
+                        .filter(|file| {
+                            let name = file.filename.to_lowercase();
+                            name.ends_with(".safetensors")
+                                || name == "model.safetensors.index.json"
+                                || matches!(
+                                    name.as_str(),
+                                    "config.json"
+                                        | "generation_config.json"
+                                        | "tokenizer.json"
+                                        | "tokenizer.model"
+                                        | "tokenizer_config.json"
+                                        | "special_tokens_map.json"
+                                        | "added_tokens.json"
+                                        | "merges.txt"
+                                        | "vocab.json"
+                                        | "vocab.txt"
+                                        | "preprocessor_config.json"
+                                        | "processor_config.json"
+                                        | "chat_template.jinja"
+                                )
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    let total_size = selected_files.iter().map(|file| file.size).sum::<u64>();
+                    eprintln!("  Downloading  {}", normalized_repo);
+                    eprintln!("  Files        {}", selected_files.len());
+                    eprintln!("  Size         {}", fmt_bytes(total_size));
+                    eprintln!();
+
+                    let dl_pb = ProgressBar::new(total_size.max(1));
+                    dl_pb.set_style(
+                        ProgressStyle::default_bar()
+                            .template(
+                                "  {bar:45.yellow/dim}  {bytes:>9}/{total_bytes}  {bytes_per_sec}  eta {eta}",
+                            )
+                            .unwrap()
+                            .progress_chars("█▉▊▋▌▍▎▏  "),
+                    );
+
+                    let dl_pb_clone = dl_pb.clone();
+                    let model_id = download_hf_mlx_model(&normalized_repo, &selected_files, tok_ref, move |done, total| {
+                        dl_pb_clone.set_length(total.max(1));
+                        dl_pb_clone.set_position(done);
+                    })
+                    .await
+                    .unwrap_or_else(|e| {
+                        dl_pb.finish_with_message(format!("✗ Download failed: {e}"));
+                        std::process::exit(1);
+                    });
+
+                    dl_pb.finish_and_clear();
+                    eprintln!("  ✓ Downloaded MLX model to Jan data folder\n");
+                    println!("{model_id}");
+                }
+                _ => unreachable!(),
             }
         }
     }
@@ -841,7 +1009,7 @@ async fn handle_serve(args: ServeArgs) {
             }
             Err(_) if looks_like_hf_repo(&model_id) => {
                 // Looks like a HuggingFace repo ID — download then resolve.
-                auto_download_hf_model(&model_id, args.select).await;
+                auto_download_hf_model(&model_id, select).await;
                 match resolve_model_engine(&model_id) {
                     Ok((eng, mp, mmp)) => (
                         eng,

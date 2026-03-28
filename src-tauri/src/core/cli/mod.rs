@@ -368,6 +368,89 @@ pub struct HfFileInfo {
     pub download_url: String,
 }
 
+/// Normalize a HuggingFace repo input into `owner/repo` form.
+pub fn normalize_hf_repo_id(input: &str) -> String {
+    input
+        .trim()
+        .trim_end_matches('/')
+        .replace("https://huggingface.co/", "")
+        .replace("http://huggingface.co/", "")
+        .replace("huggingface.co/", "")
+}
+
+async fn fetch_hf_repo_manifest(
+    repo_id: &str,
+    hf_token: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let normalized_repo_id = normalize_hf_repo_id(repo_id);
+    let url = format!(
+        "https://huggingface.co/api/models/{}?blobs=true&files_metadata=true",
+        normalized_repo_id
+    );
+
+    let client = reqwest::Client::new();
+    let mut req = client.get(&url);
+    if let Some(tok) = hf_token {
+        req = req.bearer_auth(tok);
+    }
+
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    let status = resp.status();
+
+    if !status.is_success() {
+        return Err(match status.as_u16() {
+            401 | 403 => format!(
+                "HuggingFace returned {status} for '{normalized_repo_id}'. \
+                The repo may be gated — set the HF_TOKEN environment variable."
+            ),
+            404 => format!(
+                "HuggingFace repo '{normalized_repo_id}' not found."
+            ),
+            _ => format!("HuggingFace API error {status} for '{normalized_repo_id}'."),
+        });
+    }
+
+    resp.json().await.map_err(|e| e.to_string())
+}
+
+/// Fetch every sibling file in a HuggingFace repository.
+pub async fn fetch_hf_repo_files(
+    repo_id: &str,
+    hf_token: Option<&str>,
+) -> Result<Vec<HfFileInfo>, String> {
+    let normalized_repo_id = normalize_hf_repo_id(repo_id);
+    let body = fetch_hf_repo_manifest(&normalized_repo_id, hf_token).await?;
+
+    let siblings = body["siblings"]
+        .as_array()
+        .ok_or_else(|| "Unexpected HuggingFace API response format".to_string())?;
+
+    let mut files: Vec<HfFileInfo> = siblings
+        .iter()
+        .filter_map(|s| {
+            let name = s["rfilename"].as_str()?;
+            let size = s["lfs"]["size"]
+                .as_u64()
+                .or_else(|| s["size"].as_u64())
+                .unwrap_or(0);
+            let sha256 = s["lfs"]["sha256"].as_str().map(str::to_owned);
+            let download_url = format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                normalized_repo_id, name
+            );
+            Some(HfFileInfo {
+                filename: name.to_owned(),
+                size,
+                sha256,
+                download_url,
+            })
+        })
+        .collect();
+
+    files.sort_by(|a, b| a.filename.cmp(&b.filename));
+    Ok(files)
+}
+
 /// Return `true` if `s` looks like a HuggingFace repo ID (`owner/repo`).
 ///
 /// A valid HF repo ID has exactly one `/`, both parts non-empty, no
@@ -394,69 +477,16 @@ pub async fn fetch_hf_gguf_files(
     repo_id: &str,
     hf_token: Option<&str>,
 ) -> Result<Vec<HfFileInfo>, String> {
-    let url = format!(
-        "https://huggingface.co/api/models/{}?blobs=true&files_metadata=true",
-        repo_id
-    );
-
-    let client = reqwest::Client::new();
-    let mut req = client.get(&url);
-    if let Some(tok) = hf_token {
-        req = req.bearer_auth(tok);
-    }
-
-    let resp = req.send().await.map_err(|e| e.to_string())?;
-    let status = resp.status();
-
-    if !status.is_success() {
-        return Err(match status.as_u16() {
-            401 | 403 => format!(
-                "HuggingFace returned {status} for '{repo_id}'. \
-                The repo may be gated — set the HF_TOKEN environment variable."
-            ),
-            404 => format!(
-                "HuggingFace repo '{repo_id}' not found. \
-                Check the repo ID or run `jan models list` to see local models."
-            ),
-            _ => format!("HuggingFace API error {status} for '{repo_id}'."),
-        });
-    }
-
-    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-
-    let siblings = body["siblings"]
-        .as_array()
-        .ok_or_else(|| "Unexpected HuggingFace API response format".to_string())?;
-
-    let mut files: Vec<HfFileInfo> = siblings
-        .iter()
-        .filter_map(|s| {
-            let name = s["rfilename"].as_str()?;
-            if !name.to_lowercase().ends_with(".gguf") {
-                return None;
-            }
-            // Prefer LFS size, fall back to top-level size field
-            let size = s["lfs"]["size"]
-                .as_u64()
-                .or_else(|| s["size"].as_u64())
-                .unwrap_or(0);
-            let sha256 = s["lfs"]["sha256"].as_str().map(str::to_owned);
-            let download_url = format!(
-                "https://huggingface.co/{}/resolve/main/{}",
-                repo_id, name
-            );
-            Some(HfFileInfo {
-                filename: name.to_owned(),
-                size,
-                sha256,
-                download_url,
-            })
-        })
+    let normalized_repo_id = normalize_hf_repo_id(repo_id);
+    let mut files: Vec<HfFileInfo> = fetch_hf_repo_files(&normalized_repo_id, hf_token)
+        .await?
+        .into_iter()
+        .filter(|file| file.filename.to_lowercase().ends_with(".gguf"))
         .collect();
 
     if files.is_empty() {
         return Err(format!(
-            "No GGUF files found in HuggingFace repo '{repo_id}'. \
+            "No GGUF files found in HuggingFace repo '{normalized_repo_id}'. \
             For MLX/safetensors repos use `jan models load-mlx`."
         ));
     }
@@ -543,6 +573,225 @@ pub async fn download_hf_model(
         .map_err(|e| e.to_string())?;
 
     Ok(repo_id.to_string())
+}
+
+/// Download an MLX repository from HuggingFace and write a `model.yml` for it.
+///
+/// Files are stored at:
+/// `<data_folder>/mlx/models/<repo_id>/...`
+///
+/// `on_progress(downloaded, total)` is called after each chunk across the full
+/// repository download. Returns the local model ID (same as `repo_id`).
+pub async fn download_hf_mlx_model(
+    repo_id: &str,
+    files: &[HfFileInfo],
+    hf_token: Option<&str>,
+    on_progress: impl Fn(u64, u64) + Send,
+) -> Result<String, String> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    let main_file = files
+        .iter()
+        .find(|file| file.filename == "model.safetensors")
+        .or_else(|| {
+            files.iter().find(|file| {
+                file.filename
+                    .to_lowercase()
+                    .ends_with(".safetensors")
+            })
+        })
+        .ok_or_else(|| {
+            format!(
+                "No safetensors files found in HuggingFace repo '{repo_id}'."
+            )
+        })?;
+
+    let data_folder = resolve_jan_data_folder();
+    let model_dir = data_folder.join("mlx").join("models").join(repo_id);
+    tokio::fs::create_dir_all(&model_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let total_size: u64 = files.iter().map(|file| file.size).sum();
+    let mut downloaded_total: u64 = 0;
+    let client = reqwest::Client::new();
+
+    for file in files {
+        let dest_path = model_dir.join(&file.filename);
+        if let Some(parent) = dest_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
+        let mut req = client.get(&file.download_url);
+        if let Some(tok) = hf_token {
+            req = req.bearer_auth(tok);
+        }
+
+        let resp = req.send().await.map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!(
+                "Download request failed for '{}': {}",
+                file.filename,
+                resp.status()
+            ));
+        }
+
+        let mut dest = tokio::fs::File::create(&dest_path)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let mut file_downloaded: u64 = 0;
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| e.to_string())?;
+            dest.write_all(&chunk).await.map_err(|e| e.to_string())?;
+            file_downloaded += chunk.len() as u64;
+            on_progress(downloaded_total + file_downloaded, total_size);
+        }
+        dest.flush().await.map_err(|e| e.to_string())?;
+        downloaded_total += file_downloaded;
+    }
+
+    let rel_path = format!("mlx/models/{}/{}", repo_id, main_file.filename);
+    let display_name = repo_id.split('/').last().unwrap_or(repo_id);
+    let yml = format!(
+        "model_path: {rel_path}\nname: {display_name}\nsize_bytes: {total_size}\nembedding: false\n"
+    );
+
+    tokio::fs::write(model_dir.join("model.yml"), yml)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(repo_id.to_string())
+}
+
+/// Download an MLX HuggingFace repo into the Jan data folder and write `model.yml`.
+///
+/// The model is stored at:
+/// `<data_folder>/mlx/models/<repo_id>/`
+///
+/// Returns the local model ID (same as `repo_id`).
+pub async fn download_hf_mlx_repo(
+    repo_id: &str,
+    hf_token: Option<&str>,
+    on_progress: impl Fn(u64, u64) + Send,
+) -> Result<String, String> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    let normalized_repo_id = normalize_hf_repo_id(repo_id);
+    let files = fetch_hf_repo_files(&normalized_repo_id, hf_token).await?;
+
+    let has_config = files.iter().any(|file| file.filename == "config.json");
+    let has_weights = files.iter().any(|file| {
+        let name = file.filename.to_lowercase();
+        name.ends_with(".safetensors") || name == "model.safetensors.index.json"
+    });
+
+    if !has_config || !has_weights {
+        return Err(format!(
+            "Repo '{normalized_repo_id}' does not look like an MLX model repo. \
+            Expected config.json and safetensors weights."
+        ));
+    }
+
+    let include_file = |name: &str| -> bool {
+        let lower = name.to_lowercase();
+        lower.ends_with(".safetensors")
+            || lower == "model.safetensors.index.json"
+            || matches!(
+                lower.as_str(),
+                "config.json"
+                    | "generation_config.json"
+                    | "tokenizer.json"
+                    | "tokenizer.model"
+                    | "tokenizer_config.json"
+                    | "special_tokens_map.json"
+                    | "added_tokens.json"
+                    | "merges.txt"
+                    | "vocab.json"
+                    | "vocab.txt"
+                    | "preprocessor_config.json"
+                    | "processor_config.json"
+                    | "chat_template.jinja"
+            )
+    };
+
+    let selected_files: Vec<HfFileInfo> = files
+        .into_iter()
+        .filter(|file| include_file(&file.filename))
+        .collect();
+
+    if selected_files.is_empty() {
+        return Err(format!(
+            "No downloadable MLX files found in HuggingFace repo '{normalized_repo_id}'."
+        ));
+    }
+
+    let data_folder = resolve_jan_data_folder();
+    let model_dir = data_folder.join("mlx").join("models").join(&normalized_repo_id);
+    tokio::fs::create_dir_all(&model_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let client = reqwest::Client::new();
+    let total_bytes = selected_files.iter().map(|file| file.size).sum::<u64>();
+    let mut downloaded_total = 0u64;
+
+    for file in &selected_files {
+        let dest_path = model_dir.join(&file.filename);
+        if let Some(parent) = dest_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
+        let mut req = client.get(&file.download_url);
+        if let Some(tok) = hf_token {
+            req = req.bearer_auth(tok);
+        }
+
+        let resp = req.send().await.map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!(
+                "Download request failed for '{}': {}",
+                file.filename,
+                resp.status()
+            ));
+        }
+
+        let mut dest = tokio::fs::File::create(&dest_path)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut stream = resp.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| e.to_string())?;
+            dest.write_all(&chunk).await.map_err(|e| e.to_string())?;
+            downloaded_total += chunk.len() as u64;
+            on_progress(downloaded_total, total_bytes);
+        }
+        dest.flush().await.map_err(|e| e.to_string())?;
+    }
+
+    let display_name = normalized_repo_id
+        .split('/')
+        .last()
+        .unwrap_or(&normalized_repo_id);
+    let yml = format!(
+        "model_path: mlx/models/{repo_id}\nname: {display_name}\nsize_bytes: {size_bytes}\nembedding: false\n",
+        repo_id = normalized_repo_id,
+        size_bytes = total_bytes
+    );
+
+    tokio::fs::write(model_dir.join("model.yml"), yml)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(normalized_repo_id)
 }
 
 // ── App config ────────────────────────────────────────────────────────────
