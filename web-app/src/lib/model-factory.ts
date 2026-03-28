@@ -439,17 +439,15 @@ export class ModelFactory {
       Origin: 'tauri://localhost',
     }
 
-    // Custom fetch that merges parameters and calls /cancel on abort
+    const localStreamingFetch = createLocalStreamingFetch(httpFetch, parameters)
+
+    // MLX exposes a local OpenAI-compatible SSE endpoint just like llama.cpp.
+    // Route POST streaming through the Tauri IPC bridge to avoid the WebKit
+    // localhost ReadableStream issue that can leave responses hanging.
     const customFetch: typeof httpFetch = async (
       input: RequestInfo | URL,
       init?: RequestInit
     ): Promise<Response> => {
-      if (init?.method === 'POST' || !init?.method) {
-        const body = init?.body ? JSON.parse(init.body as string) : {}
-        const mergedBody = { ...body, ...parameters }
-        init = { ...init, body: JSON.stringify(mergedBody) }
-      }
-
       // When the request is aborted, also call the server's /cancel endpoint
       // to stop MLX inference immediately
       if (init?.signal) {
@@ -464,7 +462,7 @@ export class ModelFactory {
         })
       }
 
-      return httpFetch(input, init)
+      return localStreamingFetch(input, init)
     }
 
     const model = new OpenAICompatibleChatLanguageModel(modelId, {

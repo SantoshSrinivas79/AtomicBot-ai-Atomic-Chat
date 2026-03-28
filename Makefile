@@ -129,9 +129,9 @@ endif
 build-mlx-server:
 ifeq ($(shell uname -s),Darwin)
 	@echo "Building MLX server for Apple Silicon..."
-	cd mlx-server && swift build -c release
+	cd mlx-server && ARCH=$$(uname -m) && xcodebuild -scheme mlx-server -configuration Release -destination "platform=macOS,arch=$$ARCH" -derivedDataPath ./.build-xcode
 	@echo "Copying build products..."
-	@BUILD_DIR=$$(cd mlx-server && swift build -c release --show-bin-path); \
+	@BUILD_DIR="mlx-server/.build-xcode/Build/Products/Release"; \
 	if [ -z "$$BUILD_DIR" ]; then \
 		echo "Error: Could not find build products"; \
 		exit 1; \
@@ -139,10 +139,15 @@ ifeq ($(shell uname -s),Darwin)
 	mkdir -p src-tauri/resources/bin; \
 	echo "Copying mlx-server from $$BUILD_DIR..."; \
 	cp "$$BUILD_DIR/mlx-server" src-tauri/resources/bin/mlx-server; \
-	if [ -d "$$BUILD_DIR/mlx-swift_Cmlx.bundle" ]; then \
-		cp -r "$$BUILD_DIR/mlx-swift_Cmlx.bundle" src-tauri/resources/bin/; \
-	else \
-		mkdir -p src-tauri/resources/bin/mlx-swift_Cmlx.bundle; \
+	find src-tauri/resources/bin -maxdepth 1 -name '*.bundle' -exec rm -rf {} +; \
+	for bundle in "$$BUILD_DIR"/*.bundle; do \
+		if [ -d "$$bundle" ]; then \
+			cp -R "$$bundle" src-tauri/resources/bin/; \
+		fi; \
+	done; \
+	if [ ! -f "src-tauri/resources/bin/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib" ]; then \
+		echo "Error: MLX metallib bundle was not produced by the build"; \
+		exit 1; \
 	fi; \
 	chmod +x src-tauri/resources/bin/mlx-server; \
 	echo "MLX server built and copied successfully"; \
@@ -151,10 +156,10 @@ ifeq ($(shell uname -s),Darwin)
 	if [ -n "$$SIGNING_IDENTITY" ]; then \
 		echo "Signing mlx-server with identity: $$SIGNING_IDENTITY"; \
 		codesign --force --options runtime --timestamp --sign "$$SIGNING_IDENTITY" src-tauri/resources/bin/mlx-server; \
-		if [ -d "src-tauri/resources/bin/mlx-swift_Cmlx.bundle" ]; then \
-			echo "Signing mlx-swift_Cmlx.bundle..."; \
-			codesign --force --options runtime --timestamp --sign "$$SIGNING_IDENTITY" --deep src-tauri/resources/bin/mlx-swift_Cmlx.bundle; \
-		fi; \
+		find src-tauri/resources/bin -maxdepth 1 -name '*.bundle' -type d | while read -r bundle; do \
+			echo "Signing $${bundle}..."; \
+			codesign --force --options runtime --timestamp --sign "$$SIGNING_IDENTITY" --deep "$$bundle"; \
+		done; \
 		echo "Code signing completed successfully"; \
 	else \
 		echo "Warning: No Developer ID Application identity found. Skipping code signing (notarization will fail)."; \
@@ -166,8 +171,8 @@ endif
 # Build MLX server only if not already present (for dev)
 build-mlx-server-if-exists:
 ifeq ($(shell uname -s),Darwin)
-	@if [ -f "src-tauri/resources/bin/mlx-server" ]; then \
-		echo "MLX server already exists at src-tauri/resources/bin/mlx-server, skipping build..."; \
+	@if [ -f "src-tauri/resources/bin/mlx-server" ] && [ -f "src-tauri/resources/bin/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib" ]; then \
+		echo "MLX server and metallib bundle already exist, skipping build..."; \
 	else \
 		make build-mlx-server; \
 	fi
