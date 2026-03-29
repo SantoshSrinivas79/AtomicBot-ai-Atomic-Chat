@@ -54,6 +54,7 @@ src-tauri/gen/android
 
 # Swift / SPM
 .build/
+mlx-server/.build-xcode/
 
 # Test & coverage
 coverage/

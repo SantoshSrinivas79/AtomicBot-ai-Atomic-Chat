@@ -5,7 +5,7 @@ use tokio::sync::oneshot;
 use tokio::time::timeout;
 
 use super::{
-    constants::DEFAULT_MCP_CONFIG,
+    constants::default_mcp_config,
     helpers::{restart_active_mcp_servers, start_mcp_server},
 };
 use crate::core::{
@@ -346,7 +346,7 @@ pub async fn get_mcp_configs<R: Runtime>(app: AppHandle<R>) -> Result<String, St
     // Create default empty config if file doesn't exist
     if !path.exists() {
         log::info!("mcp_config.json not found, creating default empty config");
-        fs::write(&path, DEFAULT_MCP_CONFIG)
+        fs::write(&path, default_mcp_config())
             .map_err(|e| format!("Failed to create default MCP config: {e}"))?;
     }
 

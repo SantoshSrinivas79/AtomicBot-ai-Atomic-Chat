@@ -25,8 +25,12 @@ const janBrowserConfig = {
 
 const localBrowserConfig = {
   command: 'npx',
-  args: ['-y', '@playwright/mcp@latest'],
-  env: {},
+  args: ['-y', '@playwright/mcp@0.0.68'],
+  env: {
+    PLAYWRIGHT_MCP_USER_DATA_DIR: '$APP_DATA_DIR/playwright-profile',
+    PLAYWRIGHT_MCP_OUTPUT_DIR: '$APP_DATA_DIR/playwright-output',
+    PLAYWRIGHT_MCP_BROWSER: 'chrome',
+  },
   active: false,
   official: true,
 } as const
@@ -43,7 +47,7 @@ describe('useJanBrowserExtension', () => {
         'Local Browser MCP': { ...localBrowserConfig },
       },
       settings: {
-        toolCallTimeoutSeconds: 30,
+        toolCallTimeoutSeconds: 90,
         baseRestartDelayMs: 1000,
         maxRestartDelayMs: 30000,
         backoffMultiplier: 2,

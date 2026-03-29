@@ -28,7 +28,7 @@ export type MCPSettings = {
 }
 
 export const DEFAULT_MCP_SETTINGS: MCPSettings = {
-  toolCallTimeoutSeconds: 30,
+  toolCallTimeoutSeconds: 90,
   baseRestartDelayMs: 1000,
   maxRestartDelayMs: 30000,
   backoffMultiplier: 2,

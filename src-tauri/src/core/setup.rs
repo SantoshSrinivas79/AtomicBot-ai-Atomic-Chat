@@ -16,7 +16,7 @@ use tauri::{
 use tauri_plugin_store::Store;
 
 use crate::core::app::commands::get_jan_data_folder_path;
-use crate::core::mcp::constants::DEFAULT_MCP_CONFIG;
+use crate::core::mcp::constants::{default_mcp_config, local_browser_mcp_config};
 use crate::core::mcp::helpers::add_server_config;
 
 use super::{
@@ -209,19 +209,37 @@ pub fn migrate_mcp_servers(
         let result = add_server_config(
             app_handle.clone(),
             "Local Browser MCP".to_string(),
-            serde_json::json!({
-                "command": "npx",
-                "args": ["-y", "@playwright/mcp@latest"],
-                "env": {},
-                "active": false,
-                "official": true
-            }),
+            local_browser_mcp_config(false, true),
         );
         if let Err(e) = result {
             log::error!("Failed to add Local Browser MCP server config: {e}");
         }
     }
-    store.set("mcp_version", 4);
+    if mcp_version < 5 {
+        log::info!("Migrating MCP schema version 5: Updating Local Browser MCP defaults");
+        if let Err(e) = migrate_local_browser_mcp(app_handle.clone()) {
+            log::error!("Failed to update Local Browser MCP defaults: {e}");
+        }
+    }
+    if mcp_version < 6 {
+        log::info!("Migrating MCP schema version 6: Increasing MCP tool timeout");
+        if let Err(e) = migrate_mcp_tool_timeout(app_handle.clone()) {
+            log::error!("Failed to migrate MCP tool timeout: {e}");
+        }
+    }
+    if mcp_version < 7 {
+        log::info!("Migrating MCP schema version 7: Preferring local Chrome for Local Browser MCP");
+        if let Err(e) = migrate_local_browser_mcp(app_handle.clone()) {
+            log::error!("Failed to migrate Local Browser MCP browser preference: {e}");
+        }
+    }
+    if mcp_version < 8 {
+        log::info!("Migrating MCP schema version 8: Pinning Local Browser MCP to npx runtime");
+        if let Err(e) = migrate_local_browser_mcp(app_handle.clone()) {
+            log::error!("Failed to migrate Local Browser MCP runtime: {e}");
+        }
+    }
+    store.set("mcp_version", 8);
     store.save().expect("Failed to save store");
     Ok(())
 }
@@ -246,6 +264,89 @@ fn migrate_exa_to_http(app_handle: tauri::AppHandle) -> Result<(), String> {
                 "env": {},
                 "active": true
             }),
+        );
+    }
+
+    fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&config)
+            .map_err(|e| format!("Failed to serialize MCP config: {e}"))?,
+    )
+    .map_err(|e| format!("Failed to write MCP config: {e}"))?;
+
+    Ok(())
+}
+
+fn migrate_local_browser_mcp(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let config_path = get_jan_data_folder_path(app_handle).join("mcp_config.json");
+
+    let config_str =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read MCP config: {e}"))?;
+
+    let mut config: serde_json::Value = serde_json::from_str(&config_str)
+        .map_err(|e| format!("Failed to parse MCP config: {e}"))?;
+
+    let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut()) else {
+        return Err("mcpServers missing from MCP config".to_string());
+    };
+
+    let existing = servers
+        .entry("Local Browser MCP".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+
+    let active = existing
+        .get("active")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let official = existing
+        .get("official")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    let preferred = existing.get("preferred").cloned();
+
+    *existing = local_browser_mcp_config(active, official);
+
+    if let Some(preferred) = preferred {
+        if let Some(server) = existing.as_object_mut() {
+            server.insert("preferred".to_string(), preferred);
+        }
+    }
+
+    fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&config)
+            .map_err(|e| format!("Failed to serialize MCP config: {e}"))?,
+    )
+    .map_err(|e| format!("Failed to write MCP config: {e}"))?;
+
+    Ok(())
+}
+
+fn migrate_mcp_tool_timeout(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let config_path = get_jan_data_folder_path(app_handle).join("mcp_config.json");
+
+    let config_str =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read MCP config: {e}"))?;
+
+    let mut config: serde_json::Value = serde_json::from_str(&config_str)
+        .map_err(|e| format!("Failed to parse MCP config: {e}"))?;
+
+    let Some(settings) = config
+        .get_mut("mcpSettings")
+        .and_then(|s| s.as_object_mut())
+    else {
+        return Err("mcpSettings missing from MCP config".to_string());
+    };
+
+    let should_update = settings
+        .get("toolCallTimeoutSeconds")
+        .and_then(|value| value.as_u64())
+        .is_none_or(|timeout| timeout == 30);
+
+    if should_update {
+        settings.insert(
+            "toolCallTimeoutSeconds".to_string(),
+            serde_json::json!(90_u64),
         );
     }
 
@@ -309,11 +410,7 @@ pub fn setup_jan_cli<R: Runtime>(app_handle: tauri::AppHandle<R>, version_change
                 use std::os::windows::process::CommandExt;
                 cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
             }
-            if cmd
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-            {
+            if cmd.output().map(|o| o.status.success()).unwrap_or(false) {
                 log::debug!("jan CLI already on PATH — skipping reinstall");
                 return;
             }
@@ -323,7 +420,11 @@ pub fn setup_jan_cli<R: Runtime>(app_handle: tauri::AppHandle<R>, version_change
             Ok(status) => {
                 log::info!(
                     "jan CLI {} to {}",
-                    if version_changed { "updated" } else { "installed" },
+                    if version_changed {
+                        "updated"
+                    } else {
+                        "installed"
+                    },
                     status.path.as_deref().unwrap_or("<unknown>")
                 );
             }
@@ -345,7 +446,7 @@ pub fn setup_mcp<R: Runtime>(app: &App<R>) {
         let config_path = get_jan_data_folder_path(app_handle.clone()).join("mcp_config.json");
         if !config_path.exists() {
             log::info!("mcp_config.json not found, creating default config");
-            if let Err(e) = fs::write(&config_path, DEFAULT_MCP_CONFIG) {
+            if let Err(e) = fs::write(&config_path, default_mcp_config()) {
                 log::error!("Failed to create default MCP config: {e}");
             }
         }

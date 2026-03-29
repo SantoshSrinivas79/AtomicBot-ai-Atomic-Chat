@@ -269,6 +269,10 @@ async fn schedule_mcp_start_task<R: Runtime>(
     config: Value,
 ) -> Result<(), String> {
     let app_path = get_jan_data_folder_path(app.clone());
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("Failed to resolve resource directory: {e}"))?;
     let exe_path = env::current_exe().expect("Failed to get current exe path");
     let exe_parent_path = exe_path
         .parent()
@@ -277,6 +281,8 @@ async fn schedule_mcp_start_task<R: Runtime>(
 
     let config_params = extract_command_args(&config)
         .ok_or_else(|| format!("Failed to extract command args from config for {name}"))?;
+    let config_params =
+        resolve_bundled_mcp_paths(config_params, &app_path, &resource_dir, &bin_path);
 
     if config_params.transport_type.as_deref() == Some("http") && config_params.url.is_some() {
         let transport = StreamableHttpClientTransport::with_client(
@@ -440,7 +446,8 @@ async fn schedule_mcp_start_task<R: Runtime>(
         } else {
             bin_path.join("bun")
         };
-        if config_params.command.clone() == "npx"
+        if name != "Local Browser MCP"
+            && config_params.command.clone() == "npx"
             && can_override_npx(bun_x_path.display().to_string())
         {
             let mut cache_dir = app_path.clone();
@@ -561,6 +568,72 @@ async fn schedule_mcp_start_task<R: Runtime>(
         emit_mcp_update_event(&app, &name);
     }
     Ok(())
+}
+
+fn replace_mcp_placeholders(
+    value: &str,
+    app_data_dir: &std::path::Path,
+    resource_dir: &std::path::Path,
+    bin_dir: &std::path::Path,
+) -> String {
+    let bundled_bun = if cfg!(windows) {
+        bin_dir.join("bun.exe")
+    } else {
+        bin_dir.join("bun")
+    };
+    let bundled_uv = if cfg!(windows) {
+        bin_dir.join("uv.exe")
+    } else {
+        bin_dir.join("uv")
+    };
+
+    value
+        .replace("$APP_DATA_DIR", &app_data_dir.display().to_string())
+        .replace("$RESOURCE_DIR", &resource_dir.display().to_string())
+        .replace("$BUNDLED_BUN", &bundled_bun.display().to_string())
+        .replace("$BUNDLED_UV", &bundled_uv.display().to_string())
+}
+
+fn resolve_bundled_mcp_paths(
+    mut config: McpServerConfig,
+    app_data_dir: &std::path::Path,
+    resource_dir: &std::path::Path,
+    bin_dir: &std::path::Path,
+) -> McpServerConfig {
+    config.command = replace_mcp_placeholders(&config.command, app_data_dir, resource_dir, bin_dir);
+
+    config.args = config
+        .args
+        .into_iter()
+        .map(|arg| match arg {
+            Value::String(value) => Value::String(replace_mcp_placeholders(
+                &value,
+                app_data_dir,
+                resource_dir,
+                bin_dir,
+            )),
+            other => other,
+        })
+        .collect();
+
+    config.envs = config
+        .envs
+        .into_iter()
+        .map(|(key, value)| {
+            let resolved = match value {
+                Value::String(value) => Value::String(replace_mcp_placeholders(
+                    &value,
+                    app_data_dir,
+                    resource_dir,
+                    bin_dir,
+                )),
+                other => other,
+            };
+            (key, resolved)
+        })
+        .collect();
+
+    config
 }
 
 fn emit_mcp_update_event<R: Runtime>(app: &AppHandle<R>, name: &str) {
