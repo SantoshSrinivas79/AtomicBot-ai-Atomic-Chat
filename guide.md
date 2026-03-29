@@ -388,7 +388,31 @@ If a chat "stops early", always ask:
 - did tool execution fail?
 - did the follow-up request fire?
 
-## 12. A good debugging workflow
+## 12. Browser tools note
+
+The stable local browser-tools path in this repo currently uses Playwright MCP through `npx`, not Bun.
+
+Important details:
+
+- `Local Browser MCP` runs `@playwright/mcp`
+- on macOS it prefers installed local Chrome
+- this is intentional because the Bun runtime path could open the browser but still hang on `browser_navigate`
+- if browser tools suddenly stop navigating, check Node / `npx` first
+
+If you see:
+
+```text
+Tool call 'browser_navigate' timed out after 90 seconds
+```
+
+check:
+
+- whether `Local Browser MCP` is active
+- whether `node` / `npx` exists on your machine
+- whether restarting the app or toggling the MCP server fixes it
+- whether the problem is specific to a site like Google versus a simple URL like `https://example.com`
+
+## 13. A good debugging workflow
 
 When something breaks, do not guess. Narrow the layer first.
 
@@ -422,7 +446,7 @@ Check:
 
 That may be expected. The desktop app has Tauri APIs that a plain browser page does not.
 
-## 13. What I would inspect first for common problems
+## 14. What I would inspect first for common problems
 
 ### Problem: app will not start
 
@@ -442,6 +466,15 @@ Check:
 - whether the model produced tool calls
 - tool approval / MCP tool execution
 
+### Problem: browser tools open Chrome but do not navigate
+
+Check:
+
+- whether `Local Browser MCP` is running through `npx @playwright/mcp`
+- whether the app is using local Chrome on macOS
+- whether `browser_navigate` is timing out
+- whether a simple URL works before testing Google or other bot-sensitive pages
+
 ### Problem: local model missing
 
 Check:
@@ -457,7 +490,7 @@ Likely reason:
 - you opened `http://localhost:1420` directly in a browser
 - the browser page does not have `window.core` or Tauri IPC
 
-## 14. How hot reload behaves
+## 15. How hot reload behaves
 
 ### Frontend changes
 
@@ -471,7 +504,7 @@ Edits in `src-tauri/` trigger rebuild/restart through Tauri dev flow.
 
 Changes to Makefile, Tauri configs, bundled binaries, or Swift servers often require a clean restart of the dev process.
 
-## 15. Where data lives locally
+## 16. Where data lives locally
 
 During desktop usage, app data is under:
 
@@ -485,14 +518,15 @@ That is where you will see:
 
 This is useful when debugging whether the app is using repo-local resources or installed app data.
 
-## 16. Things I would not waste time on as a newbie
+## 17. Things I would not waste time on as a newbie
 
 - random peer dependency warnings unless they actually block a build
 - Vulkan skip logs on macOS
 - old Jan naming in code unless you are already touching the file
 - trying to debug desktop behavior from the plain browser page alone
+- Xcode build cache under `mlx-server/.build-xcode/`
 
-## 17. Safe first tasks
+## 18. Safe first tasks
 
 Good beginner tasks:
 
@@ -510,7 +544,7 @@ Harder tasks:
 - MCP orchestration
 - packaging / signing / resource bundle issues
 
-## 18. Practical advice
+## 19. Practical advice
 
 - Start from the failing log line and identify the layer first.
 - Use `rg` to find where a log string is emitted.
