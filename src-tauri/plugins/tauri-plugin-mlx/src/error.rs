@@ -68,12 +68,14 @@ impl MlxError {
 fn extract_unsupported_model_type(stderr: &str) -> Option<String> {
     stderr.lines().find_map(|line| {
         let marker = "Unsupported model type:";
-        line.find(marker).map(|idx| {
-            line[idx + marker.len()..]
-                .trim()
-                .trim_matches('"')
-                .to_string()
-        }).filter(|value| !value.is_empty())
+        line.find(marker)
+            .map(|idx| {
+                line[idx + marker.len()..]
+                    .trim()
+                    .trim_matches('"')
+                    .to_string()
+            })
+            .filter(|value| !value.is_empty())
     })
 }
 
