@@ -136,6 +136,12 @@ const SettingsMenu = () => {
       isEnabled: true,
     },
     {
+      title: 'common:models',
+      route: route.settings.models,
+      hasSubMenu: false,
+      isEnabled: true,
+    },
+    {
       title: 'common:mcp-servers',
       route: route.settings.mcp_servers,
       hasSubMenu: false,

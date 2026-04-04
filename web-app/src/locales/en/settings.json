@@ -267,6 +267,18 @@
   "extensions": {
     "title": "Extensions"
   },
+  "models": {
+    "description": "Manage downloaded local models, update their settings, or remove them from disk.",
+    "memoryProfileTitle": "Memory profile",
+    "memoryProfileDescription": "Apply conservative defaults across your local models for 8 GB, 16 GB, or 24 GB Macs. The preset adjusts memory-sensitive load settings only: context size everywhere, plus llama.cpp batch size and auto-expand behavior.",
+    "memoryProfileFootnote": "These presets are based on Mac memory guidance for MLX and llama.cpp workloads. Vision-capable and larger models are automatically assigned stricter limits, while sampling defaults like temperature and top-p are left to each model.",
+    "applyMemoryProfile": "Apply profile",
+    "recommendedContext": "{{tier}} profile: {{value}} context",
+    "presetAppliedTitle": "Memory profile applied",
+    "presetAppliedDescription": "Updated {{count}} model settings for the {{tier}} profile.",
+    "noModels": "No downloaded models found",
+    "noModelsDescription": "Import or download a local model to manage it here."
+  },
   "attachments": {
     "subtitle": "Configure document attachments, size limits, and retrieval behavior.",
     "featureTitle": "Feature",

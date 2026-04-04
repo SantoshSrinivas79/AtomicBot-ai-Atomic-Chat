@@ -18,6 +18,7 @@ export const route = {
     mcp_servers: '/settings/mcp-servers',
     https_proxy: '/settings/https-proxy',
     hardware: '/settings/hardware',
+    models: '/settings/models',
     assistant: '/settings/assistant',
     claude_code: '/settings/claude-code',
   },
