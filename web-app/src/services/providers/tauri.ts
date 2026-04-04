@@ -236,7 +236,7 @@ export class TauriProvidersService extends DefaultProvidersService {
               ? { id: model.id, name: model.name || model.id }
               : null
           )
-          .filter((model): model is ProviderModelOption => model !== null)
+          .filter((model: ProviderModelOption | null): model is ProviderModelOption => model !== null)
       } else if (Array.isArray(data)) {
         // Direct array format: ["model-id1", "model-id2", ...]
         return data
@@ -255,7 +255,7 @@ export class TauriProvidersService extends DefaultProvidersService {
             }
             return null
           })
-          .filter((model): model is ProviderModelOption => model !== null)
+          .filter((model: ProviderModelOption | null): model is ProviderModelOption => model !== null)
       } else if (data.models && Array.isArray(data.models)) {
         // Alternative format: { models: [...] }
         return data.models
@@ -266,7 +266,7 @@ export class TauriProvidersService extends DefaultProvidersService {
             if (!model.id) return null
             return { id: model.id, name: model.name || model.id }
           })
-          .filter((model): model is ProviderModelOption => model !== null)
+          .filter((model: ProviderModelOption | null): model is ProviderModelOption => model !== null)
       } else {
         console.warn('Unexpected response format from provider API:', data)
         return []
