@@ -41,5 +41,8 @@ fi
 echo "Сборка с подписью и нотаризацией (CI=false)…"
 cp -f src-tauri/resources/pre-install/*.tgz pre-install/ 2>/dev/null || true
 
+echo "Обновление bundled llama.cpp TurboQuant backend…"
+make download-llamacpp-backend
+
 export CI=false
 exec yarn build
