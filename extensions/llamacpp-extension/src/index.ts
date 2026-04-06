@@ -479,6 +479,24 @@ export default class llamacpp_extension extends AIEngine {
       this.registerSettings(settings)
 
       let effectiveBackendString = this.config.version_backend
+      let shouldPersistEffectiveBackend = false
+
+      // In development, always prefer the bundled backend from repo resources so
+      // local runs exercise the backend shipped by this checkout rather than an
+      // older saved backend selection from the user's data folder.
+      if (
+        bundledBackendString &&
+        typeof IS_DEV !== 'undefined' &&
+        IS_DEV &&
+        bundledBackendString !== effectiveBackendString
+      ) {
+        logger.info(
+          `Development mode: forcing bundled backend '${bundledBackendString}' over '${effectiveBackendString}'`
+        )
+        effectiveBackendString = bundledBackendString
+        bestAvailableBackendString = bundledBackendString
+        shouldPersistEffectiveBackend = true
+      }
 
       // If a bundled turboquant backend exists and current backend is not turboquant,
       // force-switch to the bundled one so users don't stay on an old non-turboquant build
@@ -494,6 +512,7 @@ export default class llamacpp_extension extends AIEngine {
         )
         effectiveBackendString = bundledBackendString
         bestAvailableBackendString = bundledBackendString
+        shouldPersistEffectiveBackend = true
       }
 
       // Handle fresh installation case where version_backend might be 'none' or invalid
@@ -507,10 +526,13 @@ export default class llamacpp_extension extends AIEngine {
         bestAvailableBackendString
       ) {
         effectiveBackendString = bestAvailableBackendString
+        shouldPersistEffectiveBackend = true
         logger.info(
           `Fresh installation or invalid backend detected, using: ${effectiveBackendString}`
         )
+      }
 
+      if (shouldPersistEffectiveBackend && effectiveBackendString) {
         this.config.version_backend = effectiveBackendString
 
         const updatedSettings = await this.getSettings()
@@ -1476,6 +1498,103 @@ export default class llamacpp_extension extends AIEngine {
       })
   }
 
+  private applyDevelopmentLoadOverrides(
+    cfg: Partial<LlamacppConfig>,
+    backend: string,
+    modelId: string,
+    modelConfig: ModelConfig,
+    mmprojPath?: string
+  ): void {
+    const isLargeMultimodalModel =
+      Boolean(mmprojPath) &&
+      Number(modelConfig.size_bytes ?? 0) > 10 * 1024 * 1024 * 1024
+
+    if (!IS_DEV || !IS_MAC || backend !== 'macos-arm64' || !isLargeMultimodalModel) {
+      return
+    }
+
+    const changes: string[] = []
+    const numericCtxSize = Number(cfg.ctx_size)
+    if (
+      !Number.isFinite(numericCtxSize) ||
+      numericCtxSize <= 0 ||
+      numericCtxSize > 2048
+    ) {
+      cfg.ctx_size = 2048
+      changes.push('ctx_size=2048')
+    }
+
+    const numericGpuLayers = Number(cfg.n_gpu_layers)
+    if (
+      !Number.isFinite(numericGpuLayers) ||
+      numericGpuLayers < 0 ||
+      numericGpuLayers === 100 ||
+      numericGpuLayers > 2
+    ) {
+      cfg.n_gpu_layers = 2
+      changes.push('n_gpu_layers=2')
+    }
+
+    const numericBatchSize = Number(cfg.batch_size)
+    if (
+      !Number.isFinite(numericBatchSize) ||
+      numericBatchSize <= 0 ||
+      numericBatchSize > 32
+    ) {
+      cfg.batch_size = 32
+      changes.push('batch_size=32')
+    }
+
+    if (cfg.flash_attn !== 'off') {
+      cfg.flash_attn = 'off'
+      changes.push('flash_attn=off')
+    }
+
+    if (cfg.cache_type_k !== 'q8_0') {
+      cfg.cache_type_k = 'q8_0'
+      changes.push('cache_type_k=q8_0')
+    }
+
+    if (cfg.cache_type_v !== 'q8_0') {
+      cfg.cache_type_v = 'q8_0'
+      changes.push('cache_type_v=q8_0')
+    }
+
+    if (cfg.fit !== false) {
+      cfg.fit = false
+      changes.push('fit=false')
+    }
+
+    if (Number(cfg.parallel) !== 1) {
+      cfg.parallel = 1
+      changes.push('parallel=1')
+    }
+
+    if (changes.length > 0) {
+      logger.warn(
+        `Development override applied for ${modelId} on macOS unified memory: ${changes.join(
+          ', '
+        )}`
+      )
+    }
+  }
+
+  private getDevelopmentLoadTimeout(
+    backend: string,
+    modelConfig: ModelConfig,
+    mmprojPath?: string
+  ): number {
+    const isLargeMultimodalModel =
+      Boolean(mmprojPath) &&
+      Number(modelConfig.size_bytes ?? 0) > 10 * 1024 * 1024 * 1024
+
+    if (!IS_DEV || !IS_MAC || backend !== 'macos-arm64' || !isLargeMultimodalModel) {
+      return Number(this.timeout)
+    }
+
+    return Math.max(Number(this.timeout), 1200)
+  }
+
   override async load(
     modelId: string,
     overrideSettings?: Partial<LlamacppConfig>,
@@ -1600,7 +1719,6 @@ export default class llamacpp_extension extends AIEngine {
     // Generate API key
     const api_key = await this.generateApiKey(modelId, String(port))
     envs['LLAMA_API_KEY'] = api_key
-    envs['LLAMA_ARG_TIMEOUT'] = String(this.timeout)
 
     // Set user envs
     if (this.llamacpp_env) this.parseEnvFromString(envs, this.llamacpp_env)
@@ -1620,6 +1738,20 @@ export default class llamacpp_extension extends AIEngine {
     // Migrate old env vars
     if (typeof cfg.fit === 'string') cfg.fit = true
 
+    this.applyDevelopmentLoadOverrides(
+      cfg,
+      backend,
+      modelId,
+      modelConfig,
+      mmprojPath
+    )
+    const loadTimeout = this.getDevelopmentLoadTimeout(
+      backend,
+      modelConfig,
+      mmprojPath
+    )
+    envs['LLAMA_ARG_TIMEOUT'] = String(loadTimeout)
+
     logger.info(
       'Calling Tauri command load_llama_model with config:',
       JSON.stringify(cfg)
@@ -1636,7 +1768,7 @@ export default class llamacpp_extension extends AIEngine {
         envs,
         mmprojPath,
         isEmbedding,
-        Number(this.timeout)
+        loadTimeout
       )
       return sInfo
     } catch (error) {
