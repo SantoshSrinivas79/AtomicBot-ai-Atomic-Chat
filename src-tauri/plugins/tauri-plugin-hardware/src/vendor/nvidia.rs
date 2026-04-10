@@ -7,7 +7,10 @@ use {
     std::sync::RwLock,
 };
 
-#[cfg(all(target_os = "macos", not(any(target_os = "android", target_os = "ios"))))]
+#[cfg(all(
+    target_os = "macos",
+    not(any(target_os = "android", target_os = "ios"))
+))]
 use nvml_wrapper::{error::NvmlError, Nvml};
 
 /// NVML handle. On Linux we use RwLock so we can invalidate after sleep/resume
@@ -61,7 +64,10 @@ where
     }
 }
 
-#[cfg(all(target_os = "macos", not(any(target_os = "android", target_os = "ios"))))]
+#[cfg(all(
+    target_os = "macos",
+    not(any(target_os = "android", target_os = "ios"))
+))]
 fn with_nvml<F, R>(f: F) -> R
 where
     F: FnOnce(Option<&Nvml>) -> R,
@@ -100,11 +106,10 @@ impl GpuInfo {
                 }
             };
 
-            self.get_nvidia_memory_usage(index)
-                .unwrap_or_else(|e| {
-                    log::error!("Failed to get memory usage for NVIDIA GPU {}: {}", index, e);
-                    self.get_usage_unsupported()
-                })
+            self.get_nvidia_memory_usage(index).unwrap_or_else(|e| {
+                log::error!("Failed to get memory usage for NVIDIA GPU {}: {}", index, e);
+                self.get_usage_unsupported()
+            })
         }
     }
 
@@ -197,7 +202,10 @@ fn create_gpu_info(nvml: &Nvml, index: u32, driver_version: &str) -> Result<GpuI
         driver_version: driver_version.to_string(),
         nvidia_info: Some(NvidiaInfo {
             index,
-            compute_capability: format!("{}.{}", compute_capability.major, compute_capability.minor),
+            compute_capability: format!(
+                "{}.{}",
+                compute_capability.major, compute_capability.minor
+            ),
         }),
         vulkan_info: None,
     })

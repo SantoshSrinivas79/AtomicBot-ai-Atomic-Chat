@@ -78,7 +78,6 @@ describe('llamacpp_extension', () => {
 
     it('should return model list when models exist', async () => {
       const { getJanDataFolderPath, joinPath, fs } = await import('@janhq/core')
-      const { invoke } = await import('@tauri-apps/api/core')
 
       // Set up providerPath first
       extension['providerPath'] = '/path/to/jan/llamacpp'
@@ -106,11 +105,11 @@ describe('llamacpp_extension', () => {
         size: 1000,
       })
 
-      vi.mocked(invoke).mockResolvedValue({
-        model_path: 'test-model/model.gguf',
-        name: 'Test Model',
-        size_bytes: 1000000,
-      })
+      vi.mocked(fs.readFileSync).mockResolvedValue(
+        ['model_path: test-model/model.gguf', 'name: Test Model', 'size_bytes: 1000000'].join(
+          '\n'
+        )
+      )
 
       const result = await extension.list()
 
@@ -132,7 +131,6 @@ describe('llamacpp_extension', () => {
 
     it('should prefer shared Jan models over local duplicates', async () => {
       const { getJanDataFolderPath, joinPath, fs } = await import('@janhq/core')
-      const { invoke } = await import('@tauri-apps/api/core')
 
       extension['providerPath'] = '/Users/test/Library/Application Support/Atomic Chat/data/llamacpp'
       extension['config'] = {
@@ -170,32 +168,26 @@ describe('llamacpp_extension', () => {
         isDirectory: path.endsWith('/shared-model'),
         size: 1000,
       }))
-      vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
-        if (
-          (args as { path?: string })?.path ===
-          `${janModelsDir}/shared-model/model.yml`
-        ) {
-          return {
-            model_path: 'llamacpp/models/shared-model/model.gguf',
-            name: 'Shared Jan Model',
-            size_bytes: 1234,
-            embedding: false,
-          }
+      vi.mocked(fs.readFileSync).mockImplementation(async (path) => {
+        if (path === `${janModelsDir}/shared-model/model.yml`) {
+          return [
+            'model_path: llamacpp/models/shared-model/model.gguf',
+            'name: Shared Jan Model',
+            'size_bytes: 1234',
+            'embedding: false',
+          ].join('\n')
         }
 
-        if (
-          (args as { path?: string })?.path ===
-          `${localModelsDir}/shared-model/model.yml`
-        ) {
-          return {
-            model_path: 'llamacpp/models/shared-model/model.gguf',
-            name: 'Local Duplicate Model',
-            size_bytes: 5678,
-            embedding: false,
-          }
+        if (path === `${localModelsDir}/shared-model/model.yml`) {
+          return [
+            'model_path: llamacpp/models/shared-model/model.gguf',
+            'name: Local Duplicate Model',
+            'size_bytes: 5678',
+            'embedding: false',
+          ].join('\n')
         }
 
-        return undefined
+        return ''
       })
 
       const result = await extension.list()
@@ -210,6 +202,86 @@ describe('llamacpp_extension', () => {
           sizeBytes: 1234,
           embedding: false,
           path: '/Users/test/Library/Application Support/Jan/data/llamacpp/models/shared-model/model.gguf',
+          source: 'jan',
+          shared: true,
+        },
+      ])
+    })
+
+    it('should include Jan-only shared models', async () => {
+      const { getJanDataFolderPath, joinPath, fs } = await import('@janhq/core')
+
+      extension['providerPath'] =
+        '/Users/test/Library/Application Support/Atomic Chat/data/llamacpp'
+      extension['config'] = {
+        prefer_jan_shared_models: true,
+        jan_data_folder: '/Users/test/Library/Application Support/Jan/data',
+      } as any
+
+      const localModelsDir =
+        '/Users/test/Library/Application Support/Atomic Chat/data/llamacpp/models'
+      const janModelsDir =
+        '/Users/test/Library/Application Support/Jan/data/llamacpp/models'
+
+      vi.mocked(getJanDataFolderPath).mockResolvedValue(
+        '/Users/test/Library/Application Support/Atomic Chat/data'
+      )
+      vi.mocked(joinPath).mockImplementation((paths) =>
+        Promise.resolve(paths.join('/'))
+      )
+      vi.mocked(fs.existsSync).mockImplementation(async (path) => {
+        const existingPaths = new Set([
+          localModelsDir,
+          janModelsDir,
+          `${janModelsDir}/unsloth/gemma-4-E4B-it-Q6_K/model.yml`,
+        ])
+        return existingPaths.has(path)
+      })
+      vi.mocked(fs.readdirSync).mockImplementation(async (path) => {
+        if (path === janModelsDir) {
+          return ['unsloth']
+        }
+        if (path === `${janModelsDir}/unsloth`) {
+          return ['gemma-4-E4B-it-Q6_K']
+        }
+        if (path === localModelsDir) {
+          return []
+        }
+        return []
+      })
+      vi.mocked(fs.fileStat).mockImplementation(async (path) => ({
+        isDirectory:
+          path === `${janModelsDir}/unsloth` ||
+          path === `${janModelsDir}/unsloth/gemma-4-E4B-it-Q6_K`,
+        size: 1000,
+      }))
+      vi.mocked(fs.readFileSync).mockImplementation(async (path) => {
+        if (path === `${janModelsDir}/unsloth/gemma-4-E4B-it-Q6_K/model.yml`) {
+          return [
+            'model_path: llamacpp/models/unsloth/gemma-4-E4B-it-Q6_K/model.gguf',
+            'mmproj_path: llamacpp/models/unsloth/gemma-4-E4B-it-Q6_K/mmproj.gguf',
+            'name: unsloth/gemma-4-E4B-it-Q6_K',
+            'size_bytes: 8065295680',
+            'embedding: false',
+          ].join('\n')
+        }
+
+        return ''
+      })
+
+      const result = await extension.list()
+
+      expect(result).toEqual([
+        {
+          id: 'unsloth/gemma-4-E4B-it-Q6_K',
+          name: 'unsloth/gemma-4-E4B-it-Q6_K',
+          quant_type: undefined,
+          providerId: 'llamacpp',
+          port: 0,
+          sizeBytes: 8065295680,
+          embedding: false,
+          path: '/Users/test/Library/Application Support/Jan/data/llamacpp/models/unsloth/gemma-4-E4B-it-Q6_K/model.gguf',
+          capabilities: ['vision'],
           source: 'jan',
           shared: true,
         },

@@ -81,6 +81,12 @@ APP_CANDIDATES=(
 if [[ "$BUILD_FIRST" == true ]]; then
   echo "Building Atomic Chat macOS app bundle..."
   (cd "$SCRIPT_DIR" && yarn build:tauri:darwin:native)
+
+  EXTENSIONS_CACHE_DIR="$HOME/Library/Application Support/Atomic Chat/data/extensions"
+  if [[ -d "$EXTENSIONS_CACHE_DIR" ]]; then
+    echo "Refreshing installed extension cache..."
+    rm -rf "$EXTENSIONS_CACHE_DIR"
+  fi
 fi
 
 LAUNCH_ARGS=("${APP_ARGS[@]}")

@@ -30,7 +30,10 @@ pub async fn stream_local_http(
     }
     req = req.body(body);
 
-    let response = req.send().await.map_err(|e| format!("Request failed: {e}"))?;
+    let response = req
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
     let status = response.status().as_u16();
 
     if !response.status().is_success() {

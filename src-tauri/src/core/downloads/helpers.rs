@@ -1,7 +1,7 @@
 use super::models::{DownloadEvent, DownloadItem, ProgressTracker, ProxyConfig};
 use crate::core::app::commands::get_jan_data_folder_path;
-use crate::core::updater::session::get_session_id;
 use crate::core::updater::hmac_client::SignedRequestHeaders;
+use crate::core::updater::session::get_session_id;
 use futures_util::StreamExt;
 use jan_utils::normalize_path;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -60,9 +60,12 @@ pub fn err_to_string<E: std::fmt::Display>(e: E) -> String {
 pub fn convert_to_mirror_url(url: &str) -> Option<String> {
     let parsed = Url::parse(url).ok()?;
     let host = parsed.host_str()?;
-    
+
     // Check if the domain should use mirror
-    if MIRROR_DOMAINS.iter().any(|domain| host == *domain || host.ends_with(&format!(".{}", domain))) {
+    if MIRROR_DOMAINS
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{}", domain)))
+    {
         // Remove the scheme (https://) and prepend mirror prefix
         let url_without_scheme = url
             .strip_prefix("https://")
@@ -622,12 +625,12 @@ async fn download_single_file(
         // Use mirror fallback for new downloads
         _get_maybe_resume_with_fallback(&client, &item.url, 0).await?
     };
-    
+
     // Log which URL is being used for download
     if actual_url != item.url {
         log::info!("Downloading via Jan mirror: {}", actual_url);
     }
-    
+
     let mut stream = resp.bytes_stream();
 
     let file = if should_resume {
@@ -731,11 +734,14 @@ pub async fn _get_maybe_resume_with_fallback(
                 return Ok((resp, mirror_url));
             }
             Err(e) => {
-                log::warn!("Jan mirror download failed: {}. Falling back to original URL...", e);
+                log::warn!(
+                    "Jan mirror download failed: {}. Falling back to original URL...",
+                    e
+                );
             }
         }
     }
-    
+
     // Fallback to original URL (no HMAC headers needed)
     log::info!("Downloading from original URL: {}", url);
     let resp = _get_maybe_resume_internal(client, url, start_bytes).await?;
@@ -752,7 +758,7 @@ async fn _get_maybe_resume_with_hmac(
     let nonce_seed = get_download_nonce_seed();
     let app_version = get_app_version();
     let signed_headers = SignedRequestHeaders::new(SECRET_KEY, &nonce_seed, app_version);
-    
+
     let mut request = if start_bytes > 0 {
         client
             .get(url)
@@ -760,14 +766,14 @@ async fn _get_maybe_resume_with_hmac(
     } else {
         client.get(url)
     };
-    
+
     // Add HMAC headers
     for (key, value) in signed_headers.to_header_pairs() {
         request = request.header(key, value);
     }
-    
+
     let resp = request.send().await.map_err(err_to_string)?;
-    
+
     if start_bytes > 0 {
         if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
             return Err(format!(
@@ -783,7 +789,7 @@ async fn _get_maybe_resume_with_hmac(
             resp.text().await.unwrap_or_default()
         ));
     }
-    
+
     Ok(resp)
 }
 

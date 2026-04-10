@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 fn default_parallel() -> i32 {
-     1
- }
+    1
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlamacppConfig {
     pub version_backend: String,
@@ -91,8 +91,9 @@ impl ArgumentBuilder {
 
     /// Standard cache types supported by upstream llama.cpp.
     /// Extended types like `turbo3` are only available in turboquant builds.
-    const STANDARD_CACHE_TYPES: &'static [&'static str] =
-        &["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
+    const STANDARD_CACHE_TYPES: &'static [&'static str] = &[
+        "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1",
+    ];
 
     fn sanitize_cache_type(&self, value: &str) -> String {
         if Self::STANDARD_CACHE_TYPES.contains(&value) || self.is_turboquant() {

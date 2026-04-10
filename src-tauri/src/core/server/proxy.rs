@@ -424,7 +424,10 @@ pub fn get_destination_path(original_path: &str, prefix: &str) -> String {
 use tauri_plugin_mlx::state::{MlxBackendSession, SessionInfo};
 
 fn is_local_url(url: &str) -> bool {
-    url.contains("://localhost") || url.contains("://127.0.0.1") || url.contains("://0.0.0.0") || url.contains("://[::1]")
+    url.contains("://localhost")
+        || url.contains("://127.0.0.1")
+        || url.contains("://0.0.0.0")
+        || url.contains("://[::1]")
 }
 
 /// Handles the proxy request logic
@@ -578,7 +581,9 @@ async fn proxy_request(
                     .header("Access-Control-Allow-Origin", origin)
                     .header("Access-Control-Allow-Credentials", "true");
             } else {
-                log::warn!("CORS preflight: Origin '{origin}' is not trusted, not reflecting origin");
+                log::warn!(
+                    "CORS preflight: Origin '{origin}' is not trusted, not reflecting origin"
+                );
             }
         }
 
@@ -1276,7 +1281,11 @@ async fn proxy_request(
         "Proxying request to model server at base URL {upstream_url}, path: {destination_path}"
     );
 
-    let effective_client = if is_local_url(&upstream_url) { &local_client } else { &client };
+    let effective_client = if is_local_url(&upstream_url) {
+        &local_client
+    } else {
+        &client
+    };
     let mut outbound_req = effective_client.request(method.clone(), upstream_url);
 
     for (name, value) in headers.iter() {
@@ -1551,7 +1560,10 @@ fn add_cors_headers_with_host_and_origin(
             .header("Access-Control-Allow-Origin", origin)
             .header("Access-Control-Allow-Credentials", "true");
     } else {
-        log::warn!("CORS: Origin '{}' is not trusted, not reflecting origin", origin);
+        log::warn!(
+            "CORS: Origin '{}' is not trusted, not reflecting origin",
+            origin
+        );
     }
 
     builder

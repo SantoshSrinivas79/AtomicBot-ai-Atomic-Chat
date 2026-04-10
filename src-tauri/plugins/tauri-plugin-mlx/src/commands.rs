@@ -140,10 +140,7 @@ pub async fn load_mlx_model_impl(
                         || line_lower.contains("ready to accept")
                         || line_lower.contains("server started and listening on")
                     {
-                        log::info!(
-                            "MLX server appears to be ready based on stdout: '{}'",
-                            line
-                        );
+                        log::info!("MLX server appears to be ready based on stdout: '{}'", line);
                         let _ = stdout_ready_tx.send(true).await;
                     }
                 }
@@ -179,10 +176,7 @@ pub async fn load_mlx_model_impl(
                             || line_lower.contains("server listening on")
                             || line_lower.contains("server started and listening on")
                         {
-                            log::info!(
-                                "MLX model appears to be ready based on logs: '{}'",
-                                line
-                            );
+                            log::info!("MLX model appears to be ready based on logs: '{}'", line);
                             let _ = ready_tx.send(true).await;
                         }
                     }

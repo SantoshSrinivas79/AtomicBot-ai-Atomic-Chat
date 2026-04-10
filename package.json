@@ -43,7 +43,7 @@
     "build:tauri:win32": "yarn download:bin && yarn build:cli && yarn tauri build",
     "build:tauri:linux": "yarn download:bin && yarn build:cli && NO_STRIP=1 ./src-tauri/build-utils/shim-linuxdeploy.sh yarn tauri build && ./src-tauri/build-utils/buildAppImage.sh",
     "build:tauri:darwin": "yarn download:bin && make download-llamacpp-backend && yarn build:mlx-server && yarn build:foundation-models-server && yarn build:cli && yarn tauri build --target universal-apple-darwin",
-    "build:tauri:darwin:native": "yarn download:bin && make download-llamacpp-backend && make build-mlx-server-if-exists && make build-foundation-models-server-if-exists && cd src-tauri && cargo build --release --features cli --bin jan-cli && cp target/release/jan-cli resources/bin/jan-cli && chmod +x resources/bin/jan-cli && cd .. && yarn tauri build",
+    "build:tauri:darwin:native": "yarn build:extensions && yarn build:icon && yarn copy:assets:tauri && yarn download:bin && make download-llamacpp-backend && make build-mlx-server-if-exists && make build-foundation-models-server-if-exists && cd src-tauri && cargo build --release --features cli --bin jan-cli && cp target/release/jan-cli resources/bin/jan-cli && chmod +x resources/bin/jan-cli && cd .. && yarn tauri build",
     "build:tauri": "yarn build:icon && yarn copy:assets:tauri && run-script-os",
     "build:tauri:plugin:api": "cd src-tauri/plugins && yarn install && yarn workspaces foreach -Apt run build",
     "build:icon": "python3 scripts/build-macos-app-icon.py && tauri icon ./src-tauri/icons/icon.png && python3 scripts/build-macos-app-icon.py",

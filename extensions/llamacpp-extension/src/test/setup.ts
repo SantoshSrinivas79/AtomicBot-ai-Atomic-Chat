@@ -52,6 +52,7 @@ vi.mock('@tauri-apps/api/path', () => ({
 vi.mock('@janhq/core', () => ({
   getJanDataFolderPath: vi.fn(),
   fs: {
+    readFileSync: vi.fn(),
     existsSync: vi.fn(),
     readdirSync: vi.fn(),
     fileStat: vi.fn(),

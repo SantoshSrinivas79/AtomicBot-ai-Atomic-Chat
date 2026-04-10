@@ -99,6 +99,47 @@ function parseBuildNumber(version: string): number | null {
   return match ? parseInt(match[1], 10) : null
 }
 
+function parseModelConfigYaml(content: string): ModelConfig {
+  const parsedConfig: Record<string, unknown> = {}
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) {
+      continue
+    }
+
+    const separatorIndex = line.indexOf(':')
+    if (separatorIndex === -1) {
+      continue
+    }
+
+    const key = line.slice(0, separatorIndex).trim()
+    let value = line.slice(separatorIndex + 1).trim()
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1)
+    }
+
+    let parsedValue: unknown = value
+    if (value === 'true') {
+      parsedValue = true
+    } else if (value === 'false') {
+      parsedValue = false
+    } else if (value === '' || value === 'null' || value === '~') {
+      parsedValue = undefined
+    } else if (/^-?\d+(?:\.\d+)?$/.test(value)) {
+      parsedValue = Number(value)
+    }
+
+    parsedConfig[key] = parsedValue
+  }
+
+  return parsedConfig as ModelConfig
+}
+
 type ModelRoot = {
   dataFolder: string
   modelsDir: string
@@ -799,6 +840,11 @@ export default class llamacpp_extension extends AIEngine {
     return joinPath([dataFolder, modelPath])
   }
 
+  private async readModelConfig(configPath: string): Promise<ModelConfig> {
+    const configContents = await fs.readFileSync(configPath)
+    return parseModelConfigYaml(configContents)
+  }
+
   private async getSharedJanDataFolderPath(): Promise<string | undefined> {
     if (this.config?.prefer_jan_shared_models === false) {
       return undefined
@@ -864,9 +910,7 @@ export default class llamacpp_extension extends AIEngine {
         continue
       }
 
-      const modelConfig = await invoke<ModelConfig>('read_yaml', {
-        path: configPath,
-      })
+      const modelConfig = await this.readModelConfig(configPath)
 
       return {
         configPath,
@@ -899,9 +943,7 @@ export default class llamacpp_extension extends AIEngine {
         if (await fs.existsSync(modelConfigPath)) {
           const modelId = currentDir.slice(root.modelsDir.length + 1)
           if (!seenModelIds.has(modelId)) {
-            const modelConfig = await invoke<ModelConfig>('read_yaml', {
-              path: modelConfigPath,
-            })
+            const modelConfig = await this.readModelConfig(modelConfigPath)
 
             modelSources.push({
               configPath: modelConfigPath,

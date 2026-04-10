@@ -259,7 +259,9 @@ pub async fn list_supported_backends(
     for entry in &remote_backend_versions {
         log::info!(
             "[list_supported_backends] remote: {}/{} order={}",
-            entry.version, entry.backend, entry.order
+            entry.version,
+            entry.backend,
+            entry.order
         );
     }
 
@@ -296,7 +298,9 @@ pub async fn list_supported_backends(
     for entry in &merged {
         log::info!(
             "[list_supported_backends] sorted: {}/{} order={}",
-            entry.version, entry.backend, entry.order
+            entry.version,
+            entry.backend,
+            entry.order
         );
     }
 
@@ -695,10 +699,7 @@ pub async fn check_backend_for_updates(
             target_backend: Some(target_backend_string),
         })
     } else {
-        log::info!(
-            "Already at latest version: {}",
-            current_backend_string
-        );
+        log::info!("Already at latest version: {}", current_backend_string);
         Ok(UpdateCheckResult {
             update_needed: false,
             new_version: "0".to_string(),
@@ -911,7 +912,12 @@ fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path).map_err(|e| {
-                format!("copy {} → {}: {}", src_path.display(), dst_path.display(), e)
+                format!(
+                    "copy {} → {}: {}",
+                    src_path.display(),
+                    dst_path.display(),
+                    e
+                )
             })?;
         }
     }
@@ -934,8 +940,15 @@ pub async fn install_bundled_backend<R: Runtime>(
 
     // Try Tauri resource resolution (works in production builds)
     for candidate in &["resources/llamacpp-backend", "llamacpp-backend"] {
-        if let Ok(p) = app.path().resolve(candidate, tauri::path::BaseDirectory::Resource) {
-            log::info!("[install_bundled_backend] Trying resource path '{}' → {}", candidate, p.display());
+        if let Ok(p) = app
+            .path()
+            .resolve(candidate, tauri::path::BaseDirectory::Resource)
+        {
+            log::info!(
+                "[install_bundled_backend] Trying resource path '{}' → {}",
+                candidate,
+                p.display()
+            );
             if p.join("version.txt").exists() {
                 resource_dir = Some(p);
                 break;
@@ -945,9 +958,12 @@ pub async fn install_bundled_backend<R: Runtime>(
 
     // Dev mode fallback: resources live in src-tauri/resources/ relative to plugin crate
     if resource_dir.is_none() {
-        let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../resources/llamacpp-backend");
-        log::info!("[install_bundled_backend] Trying dev fallback → {}", dev_path.display());
+        let dev_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../resources/llamacpp-backend");
+        log::info!(
+            "[install_bundled_backend] Trying dev fallback → {}",
+            dev_path.display()
+        );
         if dev_path.join("version.txt").exists() {
             resource_dir = Some(dev_path);
         }
@@ -966,7 +982,10 @@ pub async fn install_bundled_backend<R: Runtime>(
     let build_dir = resource_dir.join("build");
 
     if !version_file.exists() || !backend_file.exists() || !build_dir.exists() {
-        log::info!("[install_bundled_backend] Missing files at {}", resource_dir.display());
+        log::info!(
+            "[install_bundled_backend] Missing files at {}",
+            resource_dir.display()
+        );
         return not_bundled;
     }
 
@@ -989,7 +1008,8 @@ pub async fn install_bundled_backend<R: Runtime>(
     if is_backend_installed(&target_dir) {
         log::info!(
             "[install_bundled_backend] Bundled backend already installed: {}/{}",
-            version, backend
+            version,
+            backend
         );
         return Ok(BundledBackendResult {
             installed: true,
@@ -1001,7 +1021,9 @@ pub async fn install_bundled_backend<R: Runtime>(
 
     log::info!(
         "[install_bundled_backend] Installing bundled backend {}/{} from {}",
-        version, backend, resource_dir.display()
+        version,
+        backend,
+        resource_dir.display()
     );
 
     let target_build_dir = target_dir.join("build");
@@ -1027,7 +1049,8 @@ pub async fn install_bundled_backend<R: Runtime>(
 
     log::info!(
         "[install_bundled_backend] Successfully installed bundled backend: {}/{}",
-        version, backend
+        version,
+        backend
     );
 
     Ok(BundledBackendResult {
