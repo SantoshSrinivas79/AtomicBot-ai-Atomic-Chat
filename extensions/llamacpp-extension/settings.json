@@ -11,6 +11,24 @@
     }
   },
   {
+    "key": "prefer_jan_shared_models",
+    "title": "Prefer Shared Jan Models",
+    "description": "Discover llama.cpp models from Jan first when available, then fall back to Atomic Chat's own models.",
+    "controllerType": "checkbox",
+    "controllerProps": { "value": true }
+  },
+  {
+    "key": "jan_data_folder",
+    "title": "Jan Data Folder Override",
+    "description": "Optional path to Jan's data folder. Leave blank to auto-detect a sibling Jan/data folder.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": "",
+      "placeholder": "/Users/you/Library/Application Support/Jan/data",
+      "type": "text"
+    }
+  },
+  {
     "key": "llamacpp_env",
     "title": "Environmental variables",
     "description": "Environmental variables for llama.cpp(KEY=VALUE), separated by ';'",

@@ -99,6 +99,21 @@ function parseBuildNumber(version: string): number | null {
   return match ? parseInt(match[1], 10) : null
 }
 
+type ModelRoot = {
+  dataFolder: string
+  modelsDir: string
+  source: 'local' | 'jan'
+  writable: boolean
+}
+
+type ResolvedModelSource = {
+  configPath: string
+  modelConfig: ModelConfig
+  modelDir: string
+  modelId: string
+  root: ModelRoot
+}
+
 // Folder structure for llamacpp extension:
 // <Jan's data folder>/llamacpp
 //  - models/<modelId>/
@@ -766,6 +781,194 @@ export default class llamacpp_extension extends AIEngine {
     return this.providerPath
   }
 
+  private isAbsolutePath(path: string): boolean {
+    return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
+  }
+
+  private normalizeOptionalPath(path?: string): string | undefined {
+    const normalized = path?.trim()
+    return normalized ? normalized : undefined
+  }
+
+  private async resolveModelAssetPath(
+    dataFolder: string,
+    modelPath?: string
+  ): Promise<string | undefined> {
+    if (!modelPath) return undefined
+    if (this.isAbsolutePath(modelPath)) return modelPath
+    return joinPath([dataFolder, modelPath])
+  }
+
+  private async getSharedJanDataFolderPath(): Promise<string | undefined> {
+    if (this.config?.prefer_jan_shared_models === false) {
+      return undefined
+    }
+
+    const overridePath = this.normalizeOptionalPath(this.config?.jan_data_folder)
+    if (overridePath) {
+      return overridePath
+    }
+
+    const localDataFolder = await getJanDataFolderPath()
+    const normalizedLocalPath = localDataFolder.replace(/\\/g, '/').replace(/\/+$/, '')
+    const match = normalizedLocalPath.match(/^(.*)\/[^/]+\/data$/)
+    if (!match?.[1]) {
+      return undefined
+    }
+
+    const candidatePath = await joinPath([match[1], 'Jan', 'data'])
+    return candidatePath === localDataFolder ? undefined : candidatePath
+  }
+
+  private async getModelRoots(): Promise<ModelRoot[]> {
+    const localDataFolder = await getJanDataFolderPath()
+    const localModelsDir = await joinPath([await this.getProviderPath(), 'models'])
+    const roots: ModelRoot[] = [
+      {
+        dataFolder: localDataFolder,
+        modelsDir: localModelsDir,
+        source: 'local',
+        writable: true,
+      },
+    ]
+
+    const janDataFolder = await this.getSharedJanDataFolderPath()
+    if (!janDataFolder || janDataFolder === localDataFolder) {
+      return roots
+    }
+
+    const janModelsDir = await joinPath([janDataFolder, this.providerId, 'models'])
+    if (!(await fs.existsSync(janModelsDir))) {
+      return roots
+    }
+
+    roots.unshift({
+      dataFolder: janDataFolder,
+      modelsDir: janModelsDir,
+      source: 'jan',
+      writable: false,
+    })
+
+    return roots
+  }
+
+  private async resolveModelSource(
+    modelId: string
+  ): Promise<ResolvedModelSource | undefined> {
+    const roots = await this.getModelRoots()
+
+    for (const root of roots) {
+      const modelDir = await joinPath([root.modelsDir, modelId])
+      const configPath = await joinPath([modelDir, 'model.yml'])
+      if (!(await fs.existsSync(configPath))) {
+        continue
+      }
+
+      const modelConfig = await invoke<ModelConfig>('read_yaml', {
+        path: configPath,
+      })
+
+      return {
+        configPath,
+        modelConfig,
+        modelDir,
+        modelId,
+        root,
+      }
+    }
+
+    return undefined
+  }
+
+  private async listModelSources(): Promise<ResolvedModelSource[]> {
+    const roots = await this.getModelRoots()
+    const modelSources: ResolvedModelSource[] = []
+    const seenModelIds = new Set<string>()
+
+    for (const root of roots) {
+      if (!(await fs.existsSync(root.modelsDir))) {
+        continue
+      }
+
+      let stack = [root.modelsDir]
+      while (stack.length > 0) {
+        const currentDir = stack.pop()
+        if (!currentDir) continue
+
+        const modelConfigPath = await joinPath([currentDir, 'model.yml'])
+        if (await fs.existsSync(modelConfigPath)) {
+          const modelId = currentDir.slice(root.modelsDir.length + 1)
+          if (!seenModelIds.has(modelId)) {
+            const modelConfig = await invoke<ModelConfig>('read_yaml', {
+              path: modelConfigPath,
+            })
+
+            modelSources.push({
+              configPath: modelConfigPath,
+              modelConfig,
+              modelDir: currentDir,
+              modelId,
+              root,
+            })
+            seenModelIds.add(modelId)
+          }
+          continue
+        }
+
+        const children = await fs.readdirSync(currentDir)
+        for (const child of children) {
+          const childPath = await joinPath([currentDir, child])
+          const dirInfo = await fs.fileStat(childPath)
+          if (!dirInfo.isDirectory) {
+            continue
+          }
+
+          stack.push(childPath)
+        }
+      }
+    }
+
+    return modelSources
+  }
+
+  private async buildModelInfo(source: ResolvedModelSource): Promise<modelInfo> {
+    const isEmbedding = await this.resolveEmbeddingConfig(source)
+    const capabilities: string[] = []
+    if (source.modelConfig.mmproj_path) {
+      capabilities.push('vision')
+    }
+
+    return {
+      id: source.modelId,
+      name: source.modelConfig.name ?? source.modelId,
+      quant_type: undefined,
+      providerId: this.provider,
+      port: 0,
+      sizeBytes: source.modelConfig.size_bytes ?? 0,
+      embedding: isEmbedding,
+      path: await this.resolveModelAssetPath(
+        source.root.dataFolder,
+        source.modelConfig.model_path
+      ),
+      capabilities: capabilities.length > 0 ? capabilities : undefined,
+      source: source.root.source,
+      shared: !source.root.writable,
+    } as modelInfo
+  }
+
+  private ensureModelIsWritable(
+    source: ResolvedModelSource,
+    action: 'delete' | 'edit'
+  ): void {
+    if (source.root.writable) {
+      return
+    }
+
+    throw new Error(
+      `Model ${source.modelId} is managed by Jan. ${action === 'delete' ? 'Delete' : 'Edit'} it in Jan or import a local copy into Atomic Chat first.`
+    )
+  }
+
   override async onUnload(): Promise<void> {
     // Terminate all active sessions
 
@@ -828,30 +1031,10 @@ export default class llamacpp_extension extends AIEngine {
   }
 
   override async get(modelId: string): Promise<modelInfo | undefined> {
-    const modelPath = await joinPath([
-      await this.getProviderPath(),
-      'models',
-      modelId,
-    ])
-    const path = await joinPath([modelPath, 'model.yml'])
+    const modelSource = await this.resolveModelSource(modelId)
+    if (!modelSource) return undefined
 
-    if (!(await fs.existsSync(path))) return undefined
-
-    const modelConfig = await invoke<ModelConfig>('read_yaml', {
-      path,
-    })
-
-    const isEmbedding = await this.resolveEmbeddingConfig(modelId, modelConfig)
-
-    return {
-      id: modelId,
-      name: modelConfig.name ?? modelId,
-      quant_type: undefined, // TODO: parse quantization type from model.yml or model.gguf
-      providerId: this.provider,
-      port: 0, // port is not known until the model is loaded
-      sizeBytes: modelConfig.size_bytes ?? 0,
-      embedding: isEmbedding,
-    } as modelInfo
+    return this.buildModelInfo(modelSource)
   }
 
   /**
@@ -859,9 +1042,10 @@ export default class llamacpp_extension extends AIEngine {
    * and updates the model.yml for future performance.
    */
   private async resolveEmbeddingConfig(
-    modelId: string,
-    modelConfig: ModelConfig
+    modelSource: ResolvedModelSource
   ): Promise<boolean> {
+    const { modelConfig, modelId, root, configPath } = modelSource
+
     // Fast exit: if explicitly set in config, return it
     if (typeof modelConfig.embedding === 'boolean') {
       return modelConfig.embedding
@@ -870,13 +1054,12 @@ export default class llamacpp_extension extends AIEngine {
     // Migration logic: Detect from GGUF
     let isEmbedding = false
     try {
-      const janDataFolderPath = await getJanDataFolderPath()
-      const fullModelPath = await joinPath([
-        janDataFolderPath,
-        modelConfig.model_path,
-      ])
+      const fullModelPath = await this.resolveModelAssetPath(
+        root.dataFolder,
+        modelConfig.model_path
+      )
 
-      if (await fs.existsSync(fullModelPath)) {
+      if (fullModelPath && (await fs.existsSync(fullModelPath))) {
         const metadata = await readGgufMetadata(fullModelPath)
         // Check for BERT-based architectures usually used for embeddings
         // You can expand this list (e.g., 'nomic-bert', 'xlm-roberta')
@@ -892,14 +1075,11 @@ export default class llamacpp_extension extends AIEngine {
     }
 
     // Persist the result back to model.yml so we don't read GGUF next time
-    try {
-      const configPath = await joinPath([
-        await this.getProviderPath(),
-        'models',
-        modelId,
-        'model.yml',
-      ])
+    if (!root.writable) {
+      return isEmbedding
+    }
 
+    try {
       // Update the local object
       modelConfig.embedding = isEmbedding
 
@@ -923,64 +1103,12 @@ export default class llamacpp_extension extends AIEngine {
     }
 
     await this.migrateLegacyModels()
+    const modelSources = await this.listModelSources()
+    const modelInfos = await Promise.all(
+      modelSources.map((modelSource) => this.buildModelInfo(modelSource))
+    )
 
-    let modelIds: string[] = []
-
-    // DFS
-    let stack = [modelsDir]
-    while (stack.length > 0) {
-      const currentDir = stack.pop()
-
-      // check if model.yml exists
-      const modelConfigPath = await joinPath([currentDir, 'model.yml'])
-      if (await fs.existsSync(modelConfigPath)) {
-        // +1 to remove the leading slash
-        // NOTE: this does not handle Windows path \\
-        modelIds.push(currentDir.slice(modelsDir.length + 1))
-        continue
-      }
-
-      // otherwise, look into subdirectories
-      const children = await fs.readdirSync(currentDir)
-      for (const child of children) {
-        // skip files
-        const dirInfo = await fs.fileStat(child)
-        if (!dirInfo.isDirectory) {
-          continue
-        }
-
-        stack.push(child)
-      }
-    }
-
-    let modelInfos: modelInfo[] = []
-    for (const modelId of modelIds) {
-      const path = await joinPath([modelsDir, modelId, 'model.yml'])
-      const modelConfig = await invoke<ModelConfig>('read_yaml', { path })
-      const isEmbedding = await this.resolveEmbeddingConfig(
-        modelId,
-        modelConfig
-      )
-
-      const capabilities: string[] = []
-      if (modelConfig.mmproj_path) {
-        capabilities.push('vision')
-      }
-
-      const modelInfo = {
-        id: modelId,
-        name: modelConfig.name ?? modelId,
-        quant_type: undefined, // TODO: parse quantization type from model.yml or model.gguf
-        providerId: this.provider,
-        port: 0, // port is not known until the model is loaded
-        sizeBytes: modelConfig.size_bytes ?? 0,
-        embedding: isEmbedding,
-        capabilities: capabilities.length > 0 ? capabilities : undefined,
-      } as modelInfo
-      modelInfos.push(modelInfo)
-    }
-
-    return modelInfos
+    return modelInfos.sort((a, b) => a.id.localeCompare(b.id))
   }
 
   private async migrateLegacyModels() {
@@ -1167,14 +1295,15 @@ export default class llamacpp_extension extends AIEngine {
    * @param model
    */
   async update(modelId: string, model: Partial<modelInfo>): Promise<void> {
-    const modelFolderPath = await joinPath([
-      await this.getProviderPath(),
-      'models',
-      modelId,
-    ])
-    const modelConfig = await invoke<ModelConfig>('read_yaml', {
-      path: await joinPath([modelFolderPath, 'model.yml']),
-    })
+    const modelSource = await this.resolveModelSource(modelId)
+    if (!modelSource) {
+      throw new Error(`Model ${modelId} does not exist`)
+    }
+
+    this.ensureModelIsWritable(modelSource, 'edit')
+
+    const modelFolderPath = modelSource.modelDir
+    const modelConfig = modelSource.modelConfig
     const newFolderPath = await joinPath([
       await this.getProviderPath(),
       'models',
@@ -1219,14 +1348,17 @@ export default class llamacpp_extension extends AIEngine {
         `Invalid modelId: ${modelId}. Only alphanumeric and / _ - . characters are allowed.`
       )
 
+    const existingModelSource = await this.resolveModelSource(modelId)
+    if (existingModelSource) {
+      throw new Error(`Model ${modelId} already exists`)
+    }
+
     const configPath = await joinPath([
       await this.getProviderPath(),
       'models',
       modelId,
       'model.yml',
     ])
-    if (await fs.existsSync(configPath))
-      throw new Error(`Model ${modelId} already exists`)
 
     // this is relative to Jan's data folder
     const modelDir = `${this.providerId}/models/${modelId}`
@@ -1703,17 +1835,12 @@ export default class llamacpp_extension extends AIEngine {
 
     // Ensure backend is downloaded and ready before proceeding
     await this.ensureBackendReady(backend, version)
+    const modelSource = await this.resolveModelSource(modelId)
+    if (!modelSource) {
+      throw new Error(`Model ${modelId} does not exist`)
+    }
 
-    const janDataFolderPath = await getJanDataFolderPath()
-    const modelConfigPath = await joinPath([
-      this.providerPath,
-      'models',
-      modelId,
-      'model.yml',
-    ])
-    const modelConfig = await invoke<ModelConfig>('read_yaml', {
-      path: modelConfigPath,
-    })
+    const { modelConfig } = modelSource
     const port = await this.getRandomPort()
 
     // Generate API key
@@ -1724,16 +1851,19 @@ export default class llamacpp_extension extends AIEngine {
     if (this.llamacpp_env) this.parseEnvFromString(envs, this.llamacpp_env)
 
     // Resolve model path
-    const modelPath = await joinPath([
-      janDataFolderPath,
-      modelConfig.model_path,
-    ])
+    const modelPath = await this.resolveModelAssetPath(
+      modelSource.root.dataFolder,
+      modelConfig.model_path
+    )
+    if (!modelPath) {
+      throw new Error(`Model ${modelId} does not have a valid model_path`)
+    }
 
     // Resolve mmproj path if present
-    let mmprojPath: string | undefined = undefined
-    if (modelConfig.mmproj_path) {
-      mmprojPath = await joinPath([janDataFolderPath, modelConfig.mmproj_path])
-    }
+    const mmprojPath = await this.resolveModelAssetPath(
+      modelSource.root.dataFolder,
+      modelConfig.mmproj_path
+    )
 
     // Migrate old env vars
     if (typeof cfg.fit === 'string') cfg.fit = true
@@ -2050,17 +2180,13 @@ export default class llamacpp_extension extends AIEngine {
   }
 
   override async delete(modelId: string): Promise<void> {
-    const modelDir = await joinPath([
-      await this.getProviderPath(),
-      'models',
-      modelId,
-    ])
-
-    if (!(await fs.existsSync(await joinPath([modelDir, 'model.yml'])))) {
+    const modelSource = await this.resolveModelSource(modelId)
+    if (!modelSource) {
       throw new Error(`Model ${modelId} does not exist`)
     }
 
-    await fs.rm(modelDir)
+    this.ensureModelIsWritable(modelSource, 'delete')
+    await fs.rm(modelSource.modelDir)
   }
 
   override async getLoadedModels(): Promise<string[]> {
@@ -2082,28 +2208,17 @@ export default class llamacpp_extension extends AIEngine {
    */
   async checkMmprojExists(modelId: string): Promise<boolean> {
     try {
-      const modelConfigPath = await joinPath([
-        await this.getProviderPath(),
-        'models',
-        modelId,
-        'model.yml',
-      ])
-
-      const modelConfig = await invoke<ModelConfig>('read_yaml', {
-        path: modelConfigPath,
-      })
+      const modelSource = await this.resolveModelSource(modelId)
+      if (!modelSource) {
+        return false
+      }
 
       // If mmproj_path is not defined in YAML, return false
-      if (modelConfig.mmproj_path) {
+      if (modelSource.modelConfig.mmproj_path) {
         return true
       }
 
-      const mmprojPath = await joinPath([
-        await this.getProviderPath(),
-        'models',
-        modelId,
-        'mmproj.gguf',
-      ])
+      const mmprojPath = await joinPath([modelSource.modelDir, 'mmproj.gguf'])
       return await fs.existsSync(mmprojPath)
     } catch (e) {
       logger.error(`Error checking mmproj.gguf for model ${modelId}:`, e)
@@ -2297,22 +2412,21 @@ export default class llamacpp_extension extends AIEngine {
    * @returns
    */
   async isToolSupported(modelId: string): Promise<boolean> {
-    const janDataFolderPath = await getJanDataFolderPath()
-    const modelConfigPath = await joinPath([
-      this.providerPath,
-      'models',
-      modelId,
-      'model.yml',
-    ])
-    const modelConfig = await invoke<ModelConfig>('read_yaml', {
-      path: modelConfigPath,
-    })
+    const modelSource = await this.resolveModelSource(modelId)
+    if (!modelSource) {
+      return false
+    }
+
     // model option is required
     // NOTE: model_path and mmproj_path can be either relative to Jan's data folder or absolute path
-    const modelPath = await joinPath([
-      janDataFolderPath,
-      modelConfig.model_path,
-    ])
+    const modelPath = await this.resolveModelAssetPath(
+      modelSource.root.dataFolder,
+      modelSource.modelConfig.model_path
+    )
+    if (!modelPath) {
+      return false
+    }
+
     return (await readGgufMetadata(modelPath)).metadata?.[
       'tokenizer.chat_template'
     ]?.includes('tools')

@@ -1,6 +1,5 @@
 pub mod core;
 
-
 #[cfg(not(feature = "cli"))]
 use core::{
     app::commands::get_jan_data_folder_path,
@@ -29,8 +28,10 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|_app, argv, _cwd| {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
           println!("a new app instance was opened with {argv:?} and the deep link event was already triggered");
+          let startup_options = core::app::commands::parse_startup_options_from_args(&argv);
+          let _ = app.emit("startup-options", startup_options);
           // when defining deep link schemes at runtime, you must also check `argv` here
         }));
     }
@@ -90,6 +91,7 @@ pub fn run() {
         core::app::commands::get_jan_data_folder_path,
         core::app::commands::get_configuration_file_path,
         core::app::commands::default_data_folder_path,
+        core::app::commands::get_startup_options,
         core::app::commands::change_app_data_folder,
         core::app::commands::app_token,
         // Extension commands
@@ -175,6 +177,7 @@ pub fn run() {
         core::app::commands::get_jan_data_folder_path,
         core::app::commands::get_configuration_file_path,
         core::app::commands::default_data_folder_path,
+        core::app::commands::get_startup_options,
         core::app::commands::change_app_data_folder,
         core::app::commands::app_token,
         // Extension commands
@@ -383,7 +386,6 @@ pub fn run() {
                             log::info!("MLX processes cleaned up successfully");
                         }
                     }
-
 
                     #[cfg(feature = "foundation-models")]
                     {

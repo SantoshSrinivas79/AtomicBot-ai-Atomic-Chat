@@ -1,10 +1,39 @@
 use std::{fs, path::PathBuf};
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime, State};
 
 use super::{
     constants::CONFIGURATION_FILE_NAME, helpers::copy_dir_recursive, models::AppConfiguration,
 };
 use crate::core::state::AppState;
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct StartupOptions {
+    pub prefer_jan_shared_models: bool,
+    pub jan_data_folder: Option<String>,
+}
+
+pub fn parse_startup_options_from_args(args: &[String]) -> StartupOptions {
+    let prefer_jan_shared_models = args
+        .iter()
+        .any(|arg| arg == "--prefer-jan-models" || arg == "--prefer-jan-shared-models");
+
+    let jan_data_folder = args
+        .iter()
+        .position(|arg| arg == "--jan-data-folder")
+        .and_then(|index| args.get(index + 1))
+        .cloned()
+        .or_else(|| {
+            args.iter()
+                .find_map(|arg| arg.strip_prefix("--jan-data-folder=").map(|v| v.to_string()))
+        })
+        .filter(|value| !value.trim().is_empty());
+
+    StartupOptions {
+        prefer_jan_shared_models,
+        jan_data_folder,
+    }
+}
 
 /// Resolve the Jan config file path without an AppHandle (for CLI use).
 /// Mirrors the logic in get_configuration_file_path() using the dirs crate.
@@ -223,6 +252,12 @@ pub fn default_data_folder_path<R: Runtime>(app_handle: tauri::AppHandle<R>) -> 
 #[tauri::command]
 pub fn get_user_home_path<R: Runtime>(app: AppHandle<R>) -> String {
     get_app_configurations(app.clone()).data_folder
+}
+
+#[tauri::command]
+pub fn get_startup_options() -> StartupOptions {
+    let args: Vec<String> = std::env::args().collect();
+    parse_startup_options_from_args(&args)
 }
 
 #[tauri::command]

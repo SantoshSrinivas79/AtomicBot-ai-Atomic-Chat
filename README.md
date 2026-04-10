@@ -76,6 +76,23 @@ yarn build:extensions
 yarn dev
 ```
 
+#### macOS Build And Run
+
+For local macOS bundles, use `start.sh`:
+
+```bash
+./start.sh --build
+./start.sh --build --prefer-jan-models
+./start.sh --prefer-jan-models --jan-data-folder "/Users/you/Library/Application Support/Jan/data"
+```
+
+`--prefer-jan-models` makes Atomic Chat discover llama.cpp models from Jan first when they exist, then fall back to Atomic Chat's own local models. This avoids downloading the same GGUF models twice.
+
+You can also enable the same behavior in the llama.cpp extension settings:
+
+- `Prefer Shared Jan Models`
+- `Jan Data Folder Override`
+
 ---
 
 ### System Requirements

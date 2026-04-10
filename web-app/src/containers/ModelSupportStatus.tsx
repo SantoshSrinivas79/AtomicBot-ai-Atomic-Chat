@@ -6,7 +6,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { getJanDataFolderPath, joinPath, fs } from '@janhq/core'
 import { useServiceHub } from '@/hooks/useServiceHub'
 
 interface ModelSupportStatusProps {
@@ -34,51 +33,13 @@ export const ModelSupportStatus = ({
       ctxSize: number
     ): Promise<'RED' | 'YELLOW' | 'GREEN' | 'GREY' | null> => {
       try {
-        const janDataFolder = await getJanDataFolderPath()
-
-        // First try the standard downloaded model path
-        const ggufModelPath = await joinPath([
-          janDataFolder,
-          'llamacpp',
-          'models',
-          id,
-          'model.gguf',
-        ])
-
-        // Check if the standard model.gguf file exists
-        if (await fs.existsSync(ggufModelPath)) {
-          return await serviceHub.models().isModelSupported(ggufModelPath, ctxSize)
-        }
-
-        // If model.gguf doesn't exist, try reading from model.yml (for imported models)
-        const modelConfigPath = await joinPath([
-          janDataFolder,
-          'llamacpp',
-          'models',
-          id,
-          'model.yml',
-        ])
-
-        if (!(await fs.existsSync(modelConfigPath))) {
-          console.error(
-            `Neither model.gguf nor model.yml found for model: ${id}`
-          )
+        const model = await serviceHub.models().getModel(id)
+        if (!model?.path) {
+          console.error(`Unable to resolve model path for model: ${id}`)
           return null
         }
 
-        // Read the model configuration to get the actual model path
-        const modelConfig = await serviceHub.app().readYaml<{ model_path: string }>(
-          `llamacpp/models/${id}/model.yml`
-        )
-
-        // Handle both absolute and relative paths
-        const actualModelPath =
-          modelConfig.model_path.startsWith('/') ||
-          modelConfig.model_path.match(/^[A-Za-z]:/)
-            ? modelConfig.model_path // absolute path, use as-is
-            : await joinPath([janDataFolder, modelConfig.model_path]) // relative path, join with data folder
-
-        return await serviceHub.models().isModelSupported(actualModelPath, ctxSize)
+        return await serviceHub.models().isModelSupported(model.path, ctxSize)
       } catch (error) {
         console.error(
           'Error checking model support with path resolution:',

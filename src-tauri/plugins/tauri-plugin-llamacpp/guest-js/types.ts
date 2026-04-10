@@ -29,6 +29,8 @@ export interface GgufMetadata {
 // llama.cpp settings
 export type LlamacppConfig = {
   version_backend: string
+  prefer_jan_shared_models?: boolean
+  jan_data_folder?: string
   auto_unload: boolean
   timeout: number
   llamacpp_env: string

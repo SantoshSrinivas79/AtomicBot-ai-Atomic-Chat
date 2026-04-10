@@ -3,4 +3,5 @@ export enum SystemEvent {
   KILL_SIDECAR = 'kill-sidecar',
   MCP_ERROR = 'mcp-error',
   DEEP_LINK = 'deep-link',
+  STARTUP_OPTIONS = 'startup-options',
 }
