@@ -32,9 +32,23 @@ export const paramsSettings = {
   },
   top_k: {
     key: 'top_k',
-    value: 2,
+    value: 20,
     title: 'Top K',
     description:
-      'Number of most relevant documents to retrieve. Higher values return more results.',
+      'Limits sampling to the top K candidate tokens at each step.',
+  },
+  repeat_penalty: {
+    key: 'repeat_penalty',
+    value: 1.12,
+    title: 'Repeat Penalty',
+    description:
+      'Discourages repeated phrases and loops in the generated output.',
+  },
+  max_output_tokens: {
+    key: 'max_output_tokens',
+    value: 2048,
+    title: 'Max Output Tokens',
+    description:
+      'Caps how many tokens the assistant can generate in one response.',
   },
 }

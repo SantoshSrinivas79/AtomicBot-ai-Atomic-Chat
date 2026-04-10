@@ -18,6 +18,10 @@ import EmojiPicker, { EmojiClickData, Theme } from 'emoji-picker-react'
 
 import { Textarea } from '@/components/ui/textarea'
 import { paramsSettings } from '@/lib/predefinedParams'
+import {
+  assistantParameterPresets,
+  getMatchingAssistantPresetId,
+} from '@/lib/assistant-parameter-presets'
 
 import {
   DropdownMenu,
@@ -36,6 +40,112 @@ interface AddEditAssistantProps {
   editingKey: string | null
   initialData?: Assistant
   onSave: (assistant: Assistant) => void
+}
+
+type ParameterType = 'string' | 'number' | 'boolean' | 'json'
+type ThinkingMode = 'default' | 'enabled' | 'disabled'
+type ToggleMode = 'default' | 'enabled' | 'disabled'
+
+const THINKING_PARAM_KEY = 'chat_template_kwargs'
+const STREAM_PARAM_KEY = 'stream'
+
+const commonNumericParameters = [
+  {
+    key: 'max_output_tokens',
+    title: 'Max Output Tokens',
+    description: 'Caps how many tokens the assistant can generate in one response.',
+    placeholder: '2048',
+    step: '1',
+  },
+  {
+    key: 'temperature',
+    title: 'Temperature',
+    description: 'Controls response randomness.',
+    placeholder: '0.7',
+    step: '0.1',
+  },
+  {
+    key: 'top_p',
+    title: 'Top P',
+    description: 'Sets nucleus sampling probability threshold.',
+    placeholder: '0.95',
+    step: '0.01',
+  },
+  {
+    key: 'top_k',
+    title: 'Top K',
+    description: 'Limits sampling to the top K candidate tokens.',
+    placeholder: '20',
+    step: '1',
+  },
+  {
+    key: 'repeat_penalty',
+    title: 'Repeat Penalty',
+    description: 'Discourages repeated phrases and loops.',
+    placeholder: '1.12',
+    step: '0.01',
+  },
+  {
+    key: 'presence_penalty',
+    title: 'Presence Penalty',
+    description: 'Encourages the model to explore new topics.',
+    placeholder: '0.7',
+    step: '0.01',
+  },
+  {
+    key: 'frequency_penalty',
+    title: 'Frequency Penalty',
+    description: 'Reduces word repetition across the response.',
+    placeholder: '0.7',
+    step: '0.01',
+  },
+] as const
+
+function getParameterType(value: unknown): ParameterType {
+  if (typeof value === 'boolean') return 'boolean'
+  if (typeof value === 'number') return 'number'
+  if (value !== null && typeof value === 'object') return 'json'
+  return 'string'
+}
+
+function getThinkingMode(value: unknown): ThinkingMode {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return 'default'
+  }
+
+  const enableThinking = (value as { enable_thinking?: unknown }).enable_thinking
+  if (enableThinking === true) return 'enabled'
+  if (enableThinking === false) return 'disabled'
+  return 'default'
+}
+
+function getToggleMode(value: unknown): ToggleMode {
+  if (value === true) return 'enabled'
+  if (value === false) return 'disabled'
+  return 'default'
+}
+
+function buildParametersFromDraft(
+  keys: string[],
+  values: unknown[],
+  types: ParameterType[]
+): Record<string, unknown> {
+  const parameters: Record<string, unknown> = {}
+
+  keys.forEach((key, index) => {
+    if (!key) return
+    const value = values[index]
+
+    if (types[index] === 'number') {
+      const parsed = Number(value as string)
+      parameters[key] = isNaN(parsed) ? 0 : parsed
+      return
+    }
+
+    parameters[key] = value
+  })
+
+  return parameters
 }
 
 export default function AddEditAssistant({
@@ -57,7 +167,7 @@ export default function AddEditAssistant({
   const { isDark } = useTheme()
   const [paramsKeys, setParamsKeys] = useState<string[]>([''])
   const [paramsValues, setParamsValues] = useState<unknown[]>([''])
-  const [paramsTypes, setParamsTypes] = useState<string[]>(['string'])
+  const [paramsTypes, setParamsTypes] = useState<ParameterType[]>(['string'])
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const emojiPickerRef = useRef<HTMLDivElement>(null)
   const emojiPickerTriggerRef = useRef<HTMLDivElement>(null)
@@ -100,13 +210,7 @@ export default function AddEditAssistant({
       const keys = Object.keys(initialData.parameters || {})
       const values = Object.values(initialData.parameters || {})
 
-      // Determine parameter types based on values
-      const types = values.map((value) => {
-        if (typeof value === 'boolean') return 'boolean'
-        if (typeof value === 'number') return 'number'
-        if (typeof value === 'object') return 'json'
-        return 'string'
-      })
+      const types = values.map((value) => getParameterType(value))
 
       setParamsKeys(keys.length > 0 ? keys : [''])
       setParamsValues(values.length > 0 ? values : [''])
@@ -165,7 +269,7 @@ export default function AddEditAssistant({
       setParamsValues(newValues)
     } else {
       const newTypes = [...paramsTypes]
-      newTypes[index] = value as string
+      newTypes[index] = value as ParameterType
 
       // Reset value based on the new type
       const newValues = [...paramsValues]
@@ -183,6 +287,92 @@ export default function AddEditAssistant({
       setParamsValues(newValues)
       setParamsTypes(newTypes)
     }
+  }
+
+  const upsertParameter = (
+    paramKey: string,
+    value: unknown,
+    type: ParameterType
+  ) => {
+    const existingIndex = paramsKeys.findIndex((key) => key === paramKey)
+    const newKeys = [...paramsKeys]
+    const newValues = [...paramsValues]
+    const newTypes = [...paramsTypes]
+
+    if (existingIndex !== -1) {
+      newValues[existingIndex] = value
+      newTypes[existingIndex] = type
+    } else if (newKeys[newKeys.length - 1] === '') {
+      newKeys[newKeys.length - 1] = paramKey
+      newValues[newValues.length - 1] = value
+      newTypes[newTypes.length - 1] = type
+    } else {
+      newKeys.push(paramKey)
+      newValues.push(value)
+      newTypes.push(type)
+    }
+
+    setParamsKeys(newKeys)
+    setParamsValues(newValues)
+    setParamsTypes(newTypes)
+  }
+
+  const removeParameterByKey = (paramKey: string) => {
+    const existingIndex = paramsKeys.findIndex((key) => key === paramKey)
+    if (existingIndex === -1) return
+
+    const newKeys = [...paramsKeys]
+    const newValues = [...paramsValues]
+    const newTypes = [...paramsTypes]
+
+    newKeys.splice(existingIndex, 1)
+    newValues.splice(existingIndex, 1)
+    newTypes.splice(existingIndex, 1)
+
+    setParamsKeys(newKeys.length > 0 ? newKeys : [''])
+    setParamsValues(newValues.length > 0 ? newValues : [''])
+    setParamsTypes(newTypes.length > 0 ? newTypes : ['string'])
+  }
+
+  const replaceParameters = (parameters: Record<string, unknown>) => {
+    const nextKeys = Object.keys(parameters)
+    const nextValues = Object.values(parameters)
+    const nextTypes = nextValues.map((value) => getParameterType(value))
+
+    setParamsKeys(nextKeys.length > 0 ? nextKeys : [''])
+    setParamsValues(nextValues.length > 0 ? nextValues : [''])
+    setParamsTypes(nextTypes.length > 0 ? nextTypes : ['string'])
+  }
+
+  const setThinkingMode = (mode: ThinkingMode) => {
+    if (mode === 'default') {
+      removeParameterByKey(THINKING_PARAM_KEY)
+      return
+    }
+
+    upsertParameter(
+      THINKING_PARAM_KEY,
+      { enable_thinking: mode === 'enabled' },
+      'json'
+    )
+  }
+
+  const setToggleMode = (paramKey: string, mode: ToggleMode) => {
+    if (mode === 'default') {
+      removeParameterByKey(paramKey)
+      return
+    }
+
+    upsertParameter(paramKey, mode === 'enabled', 'boolean')
+  }
+
+  const setNumericParameterValue = (paramKey: string, rawValue: string) => {
+    if (rawValue.trim() === '') {
+      removeParameterByKey(paramKey)
+      return
+    }
+
+    upsertParameter(paramKey, rawValue, 'number')
   }
 
   const handleAddParameter = () => {
@@ -203,24 +393,32 @@ export default function AddEditAssistant({
     setParamsTypes(newTypes.length > 0 ? newTypes : ['string'])
   }
 
+  const applyPreset = (presetId: (typeof assistantParameterPresets)[number]['id']) => {
+    const preset = assistantParameterPresets.find((entry) => entry.id === presetId)
+    if (!preset) return
+
+    const nextParameters = { ...draftParameters }
+    preset.remove.forEach((key) => {
+      delete nextParameters[key]
+    })
+    Object.entries(preset.set).forEach(([key, value]) => {
+      nextParameters[key] = value
+    })
+
+    replaceParameters(nextParameters)
+  }
+
   const handleSave = () => {
     if (!name.trim()) {
       setNameError(t('assistants:nameRequired'))
       return
     }
     setNameError(null)
-    // Convert parameters arrays to object
-    const parameters: Record<string, unknown> = {}
-    paramsKeys.forEach((key, index) => {
-      if (!key) return
-      const value = paramsValues[index]
-      if (paramsTypes[index] === 'number') {
-        const parsed = Number(value as string)
-        parameters[key] = isNaN(parsed) ? 0 : parsed
-      } else {
-        parameters[key] = value
-      }
-    })
+    const parameters = buildParametersFromDraft(
+      paramsKeys,
+      paramsValues,
+      paramsTypes
+    )
 
     // const parsedToolSteps = Number(toolStepsInput)
     const assistant: Assistant = {
@@ -239,6 +437,38 @@ export default function AddEditAssistant({
   }
 
   const { t } = useTranslation()
+  const getParameterIndex = (paramKey: string) =>
+    paramsKeys.findIndex((key) => key === paramKey)
+  const thinkingParameterIndex = paramsKeys.findIndex(
+    (key) => key === THINKING_PARAM_KEY
+  )
+  const thinkingMode =
+    thinkingParameterIndex !== -1
+      ? getThinkingMode(paramsValues[thinkingParameterIndex])
+      : 'default'
+  const thinkingModeLabel =
+    thinkingMode === 'enabled'
+      ? t('assistants:thinkingEnabled')
+      : thinkingMode === 'disabled'
+        ? t('assistants:thinkingDisabled')
+        : t('assistants:useModelDefault')
+  const streamParameterIndex = getParameterIndex(STREAM_PARAM_KEY)
+  const streamMode =
+    streamParameterIndex !== -1
+      ? getToggleMode(paramsValues[streamParameterIndex])
+      : 'default'
+  const streamModeLabel =
+    streamMode === 'enabled'
+      ? t('assistants:streamEnabled')
+      : streamMode === 'disabled'
+        ? t('assistants:streamDisabled')
+        : t('assistants:useModelDefault')
+  const draftParameters = buildParametersFromDraft(
+    paramsKeys,
+    paramsValues,
+    paramsTypes
+  )
+  const selectedPresetId = getMatchingAssistantPresetId(draftParameters)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -346,6 +576,152 @@ export default function AddEditAssistant({
             <div className="flex items-center justify-between">
               <label className="text-sm">{t('common:settings')}</label>
             </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm">
+                  {t('assistants:configurationPresets')}
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {assistantParameterPresets.map((preset) => (
+                  <Button
+                    key={preset.id}
+                    type="button"
+                    size="sm"
+                    variant={selectedPresetId === preset.id ? 'secondary' : 'ghost'}
+                    className="h-7 rounded-full px-2 text-xs"
+                    title={preset.description}
+                    onClick={() => applyPreset(preset.id)}
+                  >
+                    {preset.label}
+                  </Button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t('assistants:configurationPresetsDesc')}
+              </p>
+            </div>
+            <div className="space-y-3 rounded-lg border border-border/60 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">
+                    {t('assistants:streamMode')}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('assistants:streamModeDesc')}
+                  </p>
+                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <div className="relative w-38 shrink-0">
+                      <Input value={streamModeLabel} readOnly />
+                      <IconChevronDown
+                        size={14}
+                        className="text-muted-foreground absolute right-2 top-1/2 -translate-y-1/2"
+                      />
+                    </div>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuItem
+                      onClick={() => setToggleMode(STREAM_PARAM_KEY, 'default')}
+                    >
+                      {t('assistants:useModelDefault')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setToggleMode(STREAM_PARAM_KEY, 'enabled')}
+                    >
+                      {t('assistants:streamEnabled')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setToggleMode(STREAM_PARAM_KEY, 'disabled')}
+                    >
+                      {t('assistants:streamDisabled')}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {commonNumericParameters.map((setting) => {
+                  const parameterIndex = getParameterIndex(setting.key)
+                  const value =
+                    parameterIndex !== -1
+                      ? paramsValues[parameterIndex]?.toString() || ''
+                      : ''
+
+                  return (
+                    <div
+                      key={setting.key}
+                      className="space-y-1 rounded-md border border-border/40 p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium">{setting.title}</p>
+                        {parameterIndex !== -1 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => removeParameterByKey(setting.key)}
+                          >
+                            {t('assistants:useModelDefault')}
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {setting.description}
+                      </p>
+                      <Input
+                        value={value}
+                        onChange={(e) =>
+                          setNumericParameterValue(setting.key, e.target.value)
+                        }
+                        type="number"
+                        step={setting.step}
+                        placeholder={setting.placeholder}
+                        className="h-9"
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="flex items-start justify-between gap-3 rounded-lg border border-border/60 p-3">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">
+                  {t('assistants:thinkingMode')}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t('assistants:thinkingModeDesc')}
+                </p>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <div className="relative w-38 shrink-0">
+                    <Input value={thinkingModeLabel} readOnly />
+                    <IconChevronDown
+                      size={14}
+                      className="text-muted-foreground absolute right-2 top-1/2 -translate-y-1/2"
+                    />
+                  </div>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-40">
+                  <DropdownMenuItem
+                    onClick={() => setThinkingMode('default')}
+                  >
+                    {t('assistants:useModelDefault')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setThinkingMode('enabled')}
+                  >
+                    {t('assistants:thinkingEnabled')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setThinkingMode('disabled')}
+                  >
+                    {t('assistants:thinkingDisabled')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             {/* <div className="flex justify-between items-center gap-2">
               <div className="w-full">
                 <p className="text-sm">{t('assistants:maxToolSteps')}</p>
@@ -380,36 +756,11 @@ export default function AddEditAssistant({
                       (k) => k === setting.key
                     )
                     if (existingIndex === -1) {
-                      // Add new parameter
-                      const newKeys = [...paramsKeys]
-                      const newValues = [...paramsValues]
-                      const newTypes = [...paramsTypes]
-
-                      // If the last param is empty, replace it, otherwise add new
-                      if (paramsKeys[paramsKeys.length - 1] === '') {
-                        newKeys[newKeys.length - 1] = setting.key
-                        newValues[newValues.length - 1] = setting.value
-                        newTypes[newTypes.length - 1] =
-                          typeof setting.value === 'boolean'
-                            ? 'boolean'
-                            : typeof setting.value === 'number'
-                              ? 'number'
-                              : 'string'
-                      } else {
-                        newKeys.push(setting.key)
-                        newValues.push(setting.value)
-                        newTypes.push(
-                          typeof setting.value === 'boolean'
-                            ? 'boolean'
-                            : typeof setting.value === 'number'
-                              ? 'number'
-                              : 'string'
-                        )
-                      }
-
-                      setParamsKeys(newKeys)
-                      setParamsValues(newValues)
-                      setParamsTypes(newTypes)
+                      upsertParameter(
+                        setting.key,
+                        setting.value,
+                        getParameterType(setting.value)
+                      )
                     }
                   }}
                   className={cn(
