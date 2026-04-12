@@ -11,6 +11,7 @@ import { ExtensionManager } from '@/lib/extension'
 import { fetch as fetchTauri } from '@tauri-apps/plugin-http'
 import { DefaultProvidersService } from './default'
 import { getModelCapabilities } from '@/lib/models'
+import { isLocalBaseUrl } from '@/lib/utils'
 import type { ProviderModelOption } from './types'
 
 export class TauriProvidersService extends DefaultProvidersService {
@@ -19,41 +20,97 @@ export class TauriProvidersService extends DefaultProvidersService {
     return fetchTauri as typeof fetch
   }
 
+  private withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string) {
+    return Promise.race<T>([
+      promise,
+      new Promise<T>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`))
+        }, timeoutMs)
+      }),
+    ])
+  }
+
+  private async fetchWithTimeout(
+    input: string,
+    init: RequestInit,
+    timeoutMs = 15000
+  ) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      return await fetch(input, {
+        ...init,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
   private async fetchProviderModels(
     provider: ModelProvider,
     headers: Record<string, string>
   ) {
-    const isLocalProvider =
-      provider.base_url?.includes('localhost:') ||
-      provider.base_url?.includes('127.0.0.1:')
+    if (isLocalBaseUrl(provider.base_url)) {
+      try {
+        // Prefer the webview's native fetch for loopback providers.
+        // We have observed Tauri's HTTP plugin establish the connection
+        // to Ollama but never resolve the response body for `/v1/models`.
+        // Browser fetch sends the request reliably here and keeps the
+        // add-model dialog from spinning indefinitely.
+        const browserHeaders = { ...headers }
+        delete browserHeaders.Origin
 
-    if (isLocalProvider) {
-      return fetchTauri(`${provider.base_url}/models`, {
-        method: 'GET',
-        headers,
-      })
+        return await this.fetchWithTimeout(
+          `${provider.base_url}/models`,
+          {
+            method: 'GET',
+            headers: browserHeaders,
+          },
+          8000
+        )
+      } catch (error) {
+        console.warn(
+          `Browser fetch failed for local provider ${provider.provider} models, falling back to Tauri fetch:`,
+          error
+        )
+        return this.withTimeout(
+          fetchTauri(`${provider.base_url}/models`, {
+            method: 'GET',
+            headers,
+            connectTimeout: 8000,
+          }),
+          10000,
+          `${provider.provider} local model fetch`
+        )
+      }
     }
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15000)
-
     try {
-      return await fetch(`${provider.base_url}/models`, {
-        method: 'GET',
-        headers,
-        signal: controller.signal,
-      })
+      return await this.fetchWithTimeout(
+        `${provider.base_url}/models`,
+        {
+          method: 'GET',
+          headers,
+        },
+        15000
+      )
     } catch (error) {
       console.warn(
         `Browser fetch failed for ${provider.provider} models, falling back to Tauri fetch:`,
         error
       )
-      return await fetchTauri(`${provider.base_url}/models`, {
-        method: 'GET',
-        headers,
-      })
-    } finally {
-      clearTimeout(timeout)
+      return await this.withTimeout(
+        fetchTauri(`${provider.base_url}/models`, {
+          method: 'GET',
+          headers,
+          connectTimeout: 15000,
+        }),
+        18000,
+        `${provider.provider} model fetch`
+      )
     }
   }
 
@@ -182,10 +239,7 @@ export class TauriProvidersService extends DefaultProvidersService {
 
       // Add Origin header for local providers to avoid CORS issues
       // Some local providers (like Ollama) require an Origin header
-      if (
-        provider.base_url.includes('localhost:') ||
-        provider.base_url.includes('127.0.0.1:')
-      ) {
+      if (isLocalBaseUrl(provider.base_url)) {
         headers['Origin'] = 'tauri://localhost'
       }
 

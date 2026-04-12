@@ -62,6 +62,40 @@ export const predefinedProviders = [
   {
     active: true,
     api_key: '',
+    base_url: 'http://127.0.0.1:11434/v1',
+    explore_models_url: 'https://ollama.com/library',
+    provider: 'ollama',
+    settings: [
+      {
+        key: 'api-key',
+        title: 'API Key (optional)',
+        description:
+          'Ollama does not require an API key for local use. Leave this empty unless you are routing Ollama through a proxy that expects bearer authentication.',
+        controller_type: 'input',
+        controller_props: {
+          placeholder: 'Optional',
+          value: '',
+          type: 'password',
+          input_actions: ['unobscure', 'copy'],
+        },
+      },
+      {
+        key: 'base-url',
+        title: 'Base URL',
+        description:
+          'The local OpenAI-compatible Ollama endpoint. The default is `http://127.0.0.1:11434/v1`.',
+        controller_type: 'input',
+        controller_props: {
+          placeholder: 'http://127.0.0.1:11434/v1',
+          value: 'http://127.0.0.1:11434/v1',
+        },
+      },
+    ],
+    models: [],
+  },
+  {
+    active: true,
+    api_key: '',
     base_url: 'https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1',
     explore_models_url: 'https://oai.azure.com/deployments',
     provider: 'azure',

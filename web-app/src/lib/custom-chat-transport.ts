@@ -19,6 +19,7 @@ import { useThreads } from '@/hooks/useThreads'
 import { useAttachments } from '@/hooks/useAttachments'
 import { ExtensionManager } from '@/lib/extension'
 import { ExtensionTypeEnum, VectorDBExtension } from '@janhq/core'
+import { extractProviderModelInferenceParameters } from './provider-model-settings'
 
 export type TokenUsageCallback = (
   usage: LanguageModelUsage,
@@ -286,14 +287,22 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
 
         // Get assistant parameters from current assistant
         const currentAssistant = useAssistant.getState().currentAssistant
-        const inferenceParams = currentAssistant?.parameters
+        const selectedModel = useModelProvider.getState().selectedModel
+        const modelInferenceParams = extractProviderModelInferenceParameters(
+          providerId,
+          selectedModel
+        )
+        const inferenceParams = {
+          ...modelInferenceParams,
+          ...(currentAssistant?.parameters ?? {}),
+        }
 
         // Create the model using the factory
         // For llamacpp provider, startModel is called internally in ModelFactory.createLlamaCppModel
         this.model = await ModelFactory.createModel(
           modelId,
           updatedProvider ?? provider,
-          inferenceParams ?? {}
+          inferenceParams
         )
       } catch (error) {
         console.error('Failed to create model:', error)

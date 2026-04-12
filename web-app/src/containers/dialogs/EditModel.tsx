@@ -15,6 +15,7 @@ import {
   IconPencil,
   IconEye,
   IconTool,
+  IconBulb,
   IconAlertTriangle,
   IconLoader2,
 } from '@tabler/icons-react'
@@ -45,6 +46,7 @@ export const DialogEditModel = ({
   const [capabilities, setCapabilities] = useState<Record<string, boolean>>({
     vision: false,
     tools: false,
+    reasoning: false,
   })
 
   // Initialize with the provided model ID or the first model if available
@@ -67,6 +69,7 @@ export const DialogEditModel = ({
   const capabilitiesToObject = (capabilitiesList: string[]) => ({
     vision: capabilitiesList.includes('vision'),
     tools: capabilitiesList.includes('tools'),
+    reasoning: capabilitiesList.includes('reasoning'),
   })
 
   // Initialize capabilities and display name from selected model
@@ -264,6 +267,21 @@ export const DialogEditModel = ({
                 checked={capabilities.vision}
                 onCheckedChange={(checked) =>
                   handleCapabilityChange('vision', checked)
+                }
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <IconBulb className="size-4 text-muted-foreground" />
+                <span className="text-sm">{t('common:reasoning')}</span>
+              </div>
+              <Switch
+                id="reasoning-capability"
+                checked={capabilities.reasoning}
+                onCheckedChange={(checked) =>
+                  handleCapabilityChange('reasoning', checked)
                 }
                 disabled={isLoading}
               />

@@ -3,7 +3,12 @@ import { Card, CardItem } from '@/containers/Card'
 import HeaderPage from '@/containers/HeaderPage'
 import SettingsMenu from '@/containers/SettingsMenu'
 import { useModelProvider } from '@/hooks/useModelProvider'
-import { cn, getProviderTitle, getModelDisplayName } from '@/lib/utils'
+import {
+  cn,
+  getProviderTitle,
+  getModelDisplayName,
+  isLocalProviderConfig,
+} from '@/lib/utils'
 import { createFileRoute, Link, useParams } from '@tanstack/react-router'
 import { useTranslation } from '@/i18n/react-i18next-compat'
 import Capabilities from '@/containers/Capabilities'
@@ -36,6 +41,7 @@ import { basenameNoExt } from '@/lib/utils'
 import { useAppState } from '@/hooks/useAppState'
 import { useShallow } from 'zustand/shallow'
 import { DialogAddModel } from '@/containers/dialogs/AddModel'
+import { withProviderModelSettings } from '@/lib/provider-model-settings'
 
 // as route.threadsDetail
 export const Route = createFileRoute('/settings/providers/$providerName')({
@@ -214,13 +220,15 @@ function ProviderDetail() {
         .fetchModelsFromProvider(provider)
 
       // Create new models from the fetched provider models
-      const newModels: Model[] = providerModels.map(({ id, name }) => ({
-        id,
-        model: id,
-        name: name || id,
-        capabilities: ['completion'], // Default capability
-        version: '1.0',
-      }))
+      const newModels: Model[] = providerModels.map(({ id, name }) =>
+        withProviderModelSettings(provider.provider, {
+          id,
+          model: id,
+          name: name || id,
+          capabilities: ['completion'], // Default capability
+          version: '1.0',
+        } as Model)
+      )
 
       // Filter out models that already exist
       const existingModelIds = provider.models.map((m) => m.id)
@@ -703,7 +711,8 @@ function ProviderDetail() {
                                 predefinedProviders.some(
                                   (p) => p.provider === provider.provider
                                 ) &&
-                                Boolean(provider.api_key?.length))) && (
+                                (Boolean(provider.api_key?.length) ||
+                                  isLocalProviderConfig(provider)))) && (
                               <FavoriteModelAction model={model} />
                             )}
                             <DialogDeleteModel

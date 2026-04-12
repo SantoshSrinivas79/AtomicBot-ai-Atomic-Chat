@@ -11,6 +11,7 @@ import SetupScreen from '@/containers/SetupScreen'
 import { route } from '@/constants/routes'
 import { predefinedProviders } from '@/constants/providers'
 import { localStorageKey } from '@/constants/localStorage'
+import { isLocalProviderConfig } from '@/lib/utils'
 
 type ThreadModel = {
   id: string
@@ -64,11 +65,10 @@ function Index() {
       return provider.models.length > 0
     }
 
-    // Predefined providers need either API key or models (for llamacpp/jan)
+    // Predefined providers need either API key or local models.
     return (
       provider.api_key?.length ||
-      (provider.provider === 'llamacpp' && provider.models.length) ||
-      (provider.provider === 'jan' && provider.models.length)
+      (isLocalProviderConfig(provider) && provider.models.length > 0)
     )
   })
 

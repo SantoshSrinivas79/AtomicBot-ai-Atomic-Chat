@@ -17,6 +17,7 @@ import { getProviderTitle } from '@/lib/utils'
 import { useTranslation } from '@/i18n/react-i18next-compat'
 import { getModelCapabilities } from '@/lib/models'
 import { toast } from 'sonner'
+import { withProviderModelSettings } from '@/lib/provider-model-settings'
 
 type DialogAddModelProps = {
   provider: ModelProvider
@@ -47,13 +48,13 @@ export const DialogAddModel = ({ provider, trigger }: DialogAddModelProps) => {
     }
 
     // Create the new model
-    const newModel = {
+    const newModel = withProviderModelSettings(provider.provider, {
       id: modelId,
       model: modelId,
       name: modelId,
       capabilities: getModelCapabilities(provider.provider, modelId),
       version: '1.0',
-    }
+    } as Model)
 
     // Update the provider with the new model
     const updatedModels = [...provider.models, newModel]

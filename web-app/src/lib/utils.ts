@@ -80,6 +80,8 @@ export function getProviderLogo(provider: string) {
       return '/images/model-provider/llamacpp.svg'
     case 'mlx':
       return '/images/model-provider/mlx.png'
+    case 'ollama':
+      return '/images/model-provider/ollama.svg'
     case 'anthropic':
       return '/images/model-provider/anthropic.svg'
     case 'huggingface':
@@ -117,6 +119,8 @@ export const getProviderTitle = (provider: string) => {
       return 'Llama.cpp'
     case 'mlx':
       return 'MLX'
+    case 'ollama':
+      return 'Ollama'
     case 'openai':
       return 'OpenAI'
     case 'openrouter':
@@ -134,6 +138,33 @@ export const getProviderTitle = (provider: string) => {
     default:
       return provider.charAt(0).toUpperCase() + provider.slice(1)
   }
+}
+
+export function isLocalBaseUrl(baseUrl?: string) {
+  if (!baseUrl) return false
+
+  try {
+    const url = new URL(baseUrl)
+    return ['localhost', '127.0.0.1', '::1'].includes(url.hostname)
+  } catch {
+    return (
+      baseUrl.includes('localhost:') ||
+      baseUrl.includes('127.0.0.1:') ||
+      baseUrl.includes('[::1]')
+    )
+  }
+}
+
+export function isLocalProviderConfig(
+  provider?: Pick<ModelProvider, 'provider' | 'base_url'> | null
+) {
+  if (!provider) return false
+
+  return (
+    provider.provider === 'jan' ||
+    isLocalProvider(provider.provider) ||
+    isLocalBaseUrl(provider.base_url)
+  )
 }
 
 export function getReadableLanguageName(language: string): string {

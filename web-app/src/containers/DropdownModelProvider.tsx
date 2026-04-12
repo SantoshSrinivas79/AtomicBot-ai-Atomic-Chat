@@ -6,7 +6,12 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { useModelProvider } from '@/hooks/useModelProvider'
-import { cn, getProviderTitle, getModelDisplayName } from '@/lib/utils'
+import {
+  cn,
+  getProviderTitle,
+  getModelDisplayName,
+  isLocalProviderConfig,
+} from '@/lib/utils'
 import { highlightFzfMatch } from '@/utils/highlight'
 import Capabilities from './Capabilities'
 import { IconSettings, IconX } from '@tabler/icons-react'
@@ -271,9 +276,10 @@ const DropdownModelProvider = memo(function DropdownModelProvider({
         const isPredefined = predefinedProviders.some((e) =>
           e.provider.includes(provider.provider)
         )
+        const isLocalConfiguredProvider = isLocalProviderConfig(provider)
         if (
           provider &&
-          provider.provider !== 'llamacpp' &&
+          !isLocalConfiguredProvider &&
           !provider.api_key?.length &&
           (isPredefined || provider.models.length === 0)
         )
@@ -344,9 +350,9 @@ const DropdownModelProvider = memo(function DropdownModelProvider({
       const activeProviders = providers
         .filter((p) => p.active)
         .sort((a, b) => {
-          const aIsLocal = a.provider === 'llamacpp' || a.provider === 'mlx'
-          const bIsLocal = b.provider === 'llamacpp' || b.provider === 'mlx'
-          // Local (llamacpp) first
+          const aIsLocal = isLocalProviderConfig(a)
+          const bIsLocal = isLocalProviderConfig(b)
+          // Local providers first
           if (aIsLocal && !bIsLocal) return -1
           if (!aIsLocal && bIsLocal) return 1
 

@@ -4,6 +4,7 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 import { useModelProvider } from './useModelProvider'
 import { useDownloadStore } from './useDownloadStore'
 import { predefinedProviders } from '@/constants/providers'
+import { isLocalProviderConfig } from '@/lib/utils'
 
 export type JanModelPromptDismissedState = {
   dismissed: boolean
@@ -48,8 +49,7 @@ export const useJanModelPrompt = () => {
     }
     return (
       provider.api_key?.length ||
-      (provider.provider === 'llamacpp' && provider.models.length) ||
-      (provider.provider === 'jan' && provider.models.length)
+      (isLocalProviderConfig(provider) && provider.models.length > 0)
     )
   })
   const isOnSetupScreen = !hasValidProviders

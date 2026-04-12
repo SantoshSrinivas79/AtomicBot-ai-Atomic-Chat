@@ -1,7 +1,7 @@
 import { useModelProvider } from '@/hooks/useModelProvider'
 
 import { useServiceHub } from '@/hooks/useServiceHub'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useMCPServers, DEFAULT_MCP_SETTINGS } from '@/hooks/useMCPServers'
 import { useAssistant, defaultAssistant } from '@/hooks/useAssistant'
 import { useNavigate } from '@tanstack/react-router'
@@ -10,7 +10,7 @@ import { useThreads } from '@/hooks/useThreads'
 import { useLocalApiServer } from '@/hooks/useLocalApiServer'
 import { useAppState } from '@/hooks/useAppState'
 import { useAppUpdater } from '@/hooks/useAppUpdater'
-import { isDev } from '@/lib/utils'
+import { isDev, isLocalBaseUrl, isLocalProvider as isRuntimeProvider } from '@/lib/utils'
 import { AppEvent, events } from '@janhq/core'
 import { SystemEvent } from '@/types/events'
 import { invoke } from '@tauri-apps/api/core'
@@ -28,13 +28,44 @@ type RegisterProviderRequest = {
   models: string[]
 }
 
-async function registerRemoteProvider(provider: ModelProvider) {
-  // Skip llamacpp - those are local models
-  if (provider.provider === 'llamacpp') return
+function mapProviderModelsToModels(
+  providerModels: Array<{ id: string; name?: string }>
+): Model[] {
+  return providerModels.map(({ id, name }) => ({
+    id,
+    model: id,
+    name: name || id,
+    capabilities: ['completion'],
+    version: '1.0',
+  }))
+}
 
-  // Skip providers without API key (they can't make requests)
-  if (!provider.api_key) {
-    console.log(`Provider ${provider.provider} has no API key, skipping registration`)
+function updateLocalProviderModels(providerName: string, importedModels: Model[]) {
+  const currentProvider = useModelProvider
+    .getState()
+    .providers.find((provider) => provider.provider === providerName)
+
+  if (!currentProvider) return
+
+  const existingModelIds = new Set(currentProvider.models.map((model) => model.id))
+  const modelsToAdd = importedModels.filter((model) => !existingModelIds.has(model.id))
+
+  if (!modelsToAdd.length) return
+
+  useModelProvider.getState().updateProvider(providerName, {
+    models: [...currentProvider.models, ...modelsToAdd],
+  })
+}
+
+async function registerRemoteProvider(provider: ModelProvider) {
+  // Skip runtime-backed local engines; they do not use remote provider registration.
+  if (isRuntimeProvider(provider.provider)) return
+
+  // Allow loopback OpenAI-compatible providers like Ollama to register without API keys.
+  if (!provider.api_key && !isLocalBaseUrl(provider.base_url)) {
+    console.log(
+      `Provider ${provider.provider} has no API key and is not local, skipping registration`
+    )
     return
   }
 
@@ -66,7 +97,11 @@ const syncRemoteProviders = () => {
   const currentActive = new Set<string>()
 
   providers.forEach((provider) => {
-    if (provider.active && provider.provider !== 'llamacpp' && provider.api_key) {
+    if (
+      provider.active &&
+      !isRuntimeProvider(provider.provider) &&
+      (provider.api_key || isLocalBaseUrl(provider.base_url))
+    ) {
       registerRemoteProvider(provider)
       currentActive.add(provider.provider)
     }
@@ -110,6 +145,7 @@ export function DataProvider() {
     defaultModelLocalApiServer,
   } = useLocalApiServer()
   const setServerStatus = useAppState((state) => state.setServerStatus)
+  const localModelImportsInFlight = useRef(new Set<string>())
 
   useEffect(() => {
     console.log('Initializing DataProvider...')
@@ -182,6 +218,46 @@ export function DataProvider() {
   useEffect(() => {
     syncRemoteProviders()
   }, [providers])
+
+  useEffect(() => {
+    providers.forEach((provider) => {
+      if (
+        !provider.active ||
+        isRuntimeProvider(provider.provider) ||
+        !isLocalBaseUrl(provider.base_url) ||
+        provider.models.length > 0
+      ) {
+        return
+      }
+
+      const importKey = `${provider.provider}:${provider.base_url}`
+      if (localModelImportsInFlight.current.has(importKey)) {
+        return
+      }
+
+      localModelImportsInFlight.current.add(importKey)
+
+      serviceHub
+        .providers()
+        .fetchModelsFromProvider(provider)
+        .then((providerModels) => {
+          if (!providerModels.length) return
+          updateLocalProviderModels(
+            provider.provider,
+            mapProviderModelsToModels(providerModels)
+          )
+        })
+        .catch((error) => {
+          console.warn(
+            `Failed to auto-import models for local provider ${provider.provider}:`,
+            error
+          )
+        })
+        .finally(() => {
+          localModelImportsInFlight.current.delete(importKey)
+        })
+    })
+  }, [providers, serviceHub])
 
   useEffect(() => {
     if (isDev()) {

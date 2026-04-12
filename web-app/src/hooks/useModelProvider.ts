@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import { localStorageKey } from '@/constants/localStorage'
 import { getServiceHub } from '@/hooks/useServiceHub'
 import { modelSettings } from '@/lib/predefined'
+import { withProviderModelSettings } from '@/lib/provider-model-settings'
 
 type ModelProviderState = {
   providers: ModelProvider[]
@@ -112,11 +113,15 @@ export const useModelProvider = create<ModelProviderState>()(
                 capabilities: mergedCapabilities.length > 0 ? mergedCapabilities : undefined,
                 displayName: existingModel?.displayName || model.displayName,
               }
-            })
+            }).map((model) => withProviderModelSettings(provider.provider, model))
 
             return {
               ...provider,
-              models: provider.persist ? updatedModels : mergedModels,
+              models: provider.persist
+                ? updatedModels
+                : mergedModels.map((model) =>
+                    withProviderModelSettings(provider.provider, model)
+                  ),
               settings: provider.settings.map((setting) => {
                 const existingSetting = provider.persist
                   ? undefined
@@ -149,9 +154,14 @@ export const useModelProvider = create<ModelProviderState>()(
         set((state) => ({
           providers: state.providers.map((provider) => {
             if (provider.provider === providerName) {
+              const updatedModels = data.models?.map((model) =>
+                withProviderModelSettings(provider.provider, model)
+              )
+
               return {
                 ...provider,
                 ...data,
+                models: updatedModels ?? data.models ?? provider.models,
               }
             }
             return provider

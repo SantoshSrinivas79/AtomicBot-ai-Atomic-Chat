@@ -55,6 +55,7 @@ import { createXai } from '@ai-sdk/xai'
 import { invoke, Channel } from '@tauri-apps/api/core'
 import { SessionInfo } from '@janhq/core'
 import { fetch as httpFetch } from '@tauri-apps/plugin-http'
+import { isLocalBaseUrl } from './utils'
 
 /**
  * Llama.cpp timings structure from the response
@@ -142,6 +143,40 @@ function createCustomFetch(
   }
 }
 
+function normalizeOpenAICompatibleParameters(
+  provider: ProviderObject,
+  parameters: Record<string, unknown>
+): Record<string, unknown> {
+  const normalizedParameters = { ...parameters }
+
+  if (provider.provider === 'ollama') {
+    const enableThinking =
+      typeof normalizedParameters.enable_thinking === 'boolean'
+        ? normalizedParameters.enable_thinking
+        : undefined
+
+    if (
+      normalizedParameters.max_tokens == null &&
+      normalizedParameters.max_output_tokens != null
+    ) {
+      normalizedParameters.max_tokens = normalizedParameters.max_output_tokens
+    }
+
+    delete normalizedParameters.max_output_tokens
+    delete normalizedParameters.enable_thinking
+
+    if (
+      normalizedParameters.reasoning_effort == null &&
+      normalizedParameters.reasoning == null
+    ) {
+      normalizedParameters.reasoning_effort =
+        enableThinking === true ? 'medium' : 'none'
+    }
+  }
+
+  return normalizedParameters
+}
+
 /**
  * For remote providers, prefer the browser fetch implementation and fall back
  * to Tauri's reqwest-backed fetch if the browser request fails. This avoids
@@ -170,12 +205,18 @@ function createRemoteFetch(
           ? input.toString()
           : input.url
 
-    const isLocal =
-      urlStr.startsWith('http://localhost:') ||
-      urlStr.startsWith('http://127.0.0.1:')
+    const isLocal = isLocalBaseUrl(urlStr)
 
     if (isLocal) {
-      return tauriFetch(input, init)
+      try {
+        return await browserFetch(input, init)
+      } catch (error) {
+        console.warn(
+          `Browser fetch failed for local ${provider?.provider ?? 'provider'}, falling back to Tauri fetch:`,
+          error
+        )
+        return tauriFetch(input, init)
+      }
     }
 
     try {
@@ -232,9 +273,7 @@ function createLocalStreamingFetch(
           ? input.toString()
           : input.url
 
-    const isLocal =
-      urlStr.startsWith('http://localhost:') ||
-      urlStr.startsWith('http://127.0.0.1:')
+    const isLocal = isLocalBaseUrl(urlStr)
     const isPost = !init?.method || init.method.toUpperCase() === 'POST'
 
     if (!isLocal || !isPost) return normalFetch(input, init)
@@ -722,6 +761,10 @@ export class ModelFactory {
     provider: ProviderObject,
     parameters: Record<string, unknown> = {}
   ): LanguageModel {
+    const normalizedParameters = normalizeOpenAICompatibleParameters(
+      provider,
+      parameters
+    )
     const headers: Record<string, string> = {}
 
     // Add custom headers if specified
@@ -734,6 +777,10 @@ export class ModelFactory {
     // Add authorization header if api_key is present
     if (provider.api_key) {
       headers['Authorization'] = `Bearer ${provider.api_key}`
+    }
+
+    if (isLocalBaseUrl(provider.base_url)) {
+      headers['Origin'] = 'tauri://localhost'
     }
 
     if (provider.provider === 'openrouter') {
@@ -754,7 +801,7 @@ export class ModelFactory {
       baseURL: provider.base_url || 'https://api.openai.com/v1',
       headers,
       includeUsage: true,
-      fetch: createRemoteFetch(httpFetch, parameters, provider),
+      fetch: createRemoteFetch(httpFetch, normalizedParameters, provider),
     })
 
     return openAICompatible.languageModel(modelId)
