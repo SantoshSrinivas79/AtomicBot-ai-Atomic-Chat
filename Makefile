@@ -218,47 +218,55 @@ endif
 # Supports GH_TOKEN env var for authenticated GitHub API requests (avoids rate limits in CI)
 download-llamacpp-backend:
 ifeq ($(shell uname -s),Darwin)
-	@echo "Downloading latest llamacpp turboquant backend for macOS..."
 	@mkdir -p src-tauri/resources/llamacpp-backend
 	@ARCH=$$(uname -m); \
 	if [ "$$ARCH" = "arm64" ]; then BACKEND="macos-arm64"; else BACKEND="macos-x64"; fi; \
-	echo "Platform: $$BACKEND"; \
-	TMPREL=$$(mktemp /tmp/llamacpp-releases-XXXXXX.json); \
-	API_URL="https://api.github.com/repos/AtomicBot-ai/atomic-llama-cpp-turboquant/releases"; \
-	if [ -n "$$GH_TOKEN" ]; then \
-		curl -sf -H "Authorization: Bearer $$GH_TOKEN" "$$API_URL" -o "$$TMPREL"; \
+	VERSION_FILE="src-tauri/resources/llamacpp-backend/version.txt"; \
+	BACKEND_FILE="src-tauri/resources/llamacpp-backend/backend.txt"; \
+	BIN_DIR="src-tauri/resources/llamacpp-backend/build/bin"; \
+	if [ "$${FORCE_LLAMACPP_BACKEND_DOWNLOAD:-0}" != "1" ] && [ -f "$$VERSION_FILE" ] && [ -f "$$BACKEND_FILE" ] && [ -d "$$BIN_DIR" ] && [ -n "$$(find "$$BIN_DIR" -maxdepth 1 -type f | head -n 1)" ] && [ "$$(cat "$$BACKEND_FILE" 2>/dev/null)" = "$$BACKEND" ]; then \
+		echo "llamacpp backend already present for $$BACKEND (version $$(cat "$$VERSION_FILE")), skipping download. Set FORCE_LLAMACPP_BACKEND_DOWNLOAD=1 to refresh."; \
 	else \
-		curl -sf "$$API_URL" -o "$$TMPREL"; \
-	fi; \
-	if [ ! -s "$$TMPREL" ]; then rm -f "$$TMPREL"; echo "Error: Failed to fetch releases from GitHub API"; exit 1; fi; \
-	if command -v jq >/dev/null 2>&1; then \
-		TAG=$$(jq -r --arg b "$$BACKEND" '[.[] | select(.tag_name | startswith("turboquant-" + $$b))][0].tag_name // empty' "$$TMPREL"); \
-		if [ -z "$$TAG" ]; then \
-			echo "No turboquant release found for $$BACKEND, trying legacy release..."; \
-			TAG=$$(jq -r '[.[] | select(.tag_name | startswith("turboquant-") | not)][0].tag_name // empty' "$$TMPREL"); \
+		echo "Downloading latest llamacpp turboquant backend for macOS..."; \
+		echo "Platform: $$BACKEND"; \
+		TMPREL=$$(mktemp /tmp/llamacpp-releases-XXXXXX.json); \
+		API_URL="https://api.github.com/repos/AtomicBot-ai/atomic-llama-cpp-turboquant/releases"; \
+		if [ -n "$$GH_TOKEN" ]; then \
+			curl -sf -H "Authorization: Bearer $$GH_TOKEN" "$$API_URL" -o "$$TMPREL"; \
+		else \
+			curl -sf "$$API_URL" -o "$$TMPREL"; \
 		fi; \
-	else \
-		TAG=$$(python3 -c "import sys,json; rs=json.load(open(sys.argv[2])); ts=[r for r in rs if r['tag_name'].startswith('turboquant-'+sys.argv[1])]; print(ts[0]['tag_name'] if ts else '')" "$$BACKEND" "$$TMPREL" 2>/dev/null); \
-		if [ -z "$$TAG" ]; then \
-			echo "No turboquant release found for $$BACKEND, trying legacy release..."; \
-			TAG=$$(python3 -c "import sys,json; rs=json.load(open(sys.argv[1])); lg=[r for r in rs if not r['tag_name'].startswith('turboquant-')]; print(lg[0]['tag_name'] if lg else '')" "$$TMPREL" 2>/dev/null); \
+		if [ ! -s "$$TMPREL" ]; then rm -f "$$TMPREL"; echo "Error: Failed to fetch releases from GitHub API"; exit 1; fi; \
+		if command -v jq >/dev/null 2>&1; then \
+			TAG=$$(jq -r --arg b "$$BACKEND" '[.[] | select(.tag_name | startswith("turboquant-" + $$b))][0].tag_name // empty' "$$TMPREL"); \
+			if [ -z "$$TAG" ]; then \
+				echo "No turboquant release found for $$BACKEND, trying legacy release..."; \
+				TAG=$$(jq -r '[.[] | select(.tag_name | startswith("turboquant-") | not)][0].tag_name // empty' "$$TMPREL"); \
+			fi; \
+		else \
+			TAG=$$(python3 -c "import sys,json; rs=json.load(open(sys.argv[2])); ts=[r for r in rs if r['tag_name'].startswith('turboquant-'+sys.argv[1])]; print(ts[0]['tag_name'] if ts else '')" "$$BACKEND" "$$TMPREL" 2>/dev/null); \
+			if [ -z "$$TAG" ]; then \
+				echo "No turboquant release found for $$BACKEND, trying legacy release..."; \
+				TAG=$$(python3 -c "import sys,json; rs=json.load(open(sys.argv[1])); lg=[r for r in rs if not r['tag_name'].startswith('turboquant-')]; print(lg[0]['tag_name'] if lg else '')" "$$TMPREL" 2>/dev/null); \
+			fi; \
 		fi; \
+		rm -f "$$TMPREL"; \
+		if [ -z "$$TAG" ]; then echo "Error: No release found"; exit 1; fi; \
+		echo "Latest release: $$TAG"; \
+		case "$$TAG" in \
+			turboquant-*) URL="https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant/releases/download/$$TAG/llama-turboquant-$$BACKEND.tar.gz" ;; \
+			*) URL="https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant/releases/download/$$TAG/llama-$$TAG-bin-$$BACKEND.tar.gz" ;; \
+		esac; \
+		echo "$$TAG" > "$$VERSION_FILE"; \
+		echo "$$BACKEND" > "$$BACKEND_FILE"; \
+		echo "Downloading: $$URL"; \
+		curl -fSL "$$URL" -o /tmp/llamacpp-backend.tar.gz; \
+		rm -rf src-tauri/resources/llamacpp-backend/build; \
+		tar -xzf /tmp/llamacpp-backend.tar.gz -C src-tauri/resources/llamacpp-backend/; \
+		rm -f /tmp/llamacpp-backend.tar.gz; \
+		echo "Downloaded and extracted llamacpp backend successfully"; \
 	fi; \
-	rm -f "$$TMPREL"; \
-	if [ -z "$$TAG" ]; then echo "Error: No release found"; exit 1; fi; \
-	echo "Latest release: $$TAG"; \
-	case "$$TAG" in \
-		turboquant-*) URL="https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant/releases/download/$$TAG/llama-turboquant-$$BACKEND.tar.gz" ;; \
-		*) URL="https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant/releases/download/$$TAG/llama-$$TAG-bin-$$BACKEND.tar.gz" ;; \
-	esac; \
-	echo "$$TAG" > src-tauri/resources/llamacpp-backend/version.txt; \
-	echo "$$BACKEND" > src-tauri/resources/llamacpp-backend/backend.txt; \
-	echo "Downloading: $$URL"; \
-	curl -fSL "$$URL" -o /tmp/llamacpp-backend.tar.gz; \
-	tar -xzf /tmp/llamacpp-backend.tar.gz -C src-tauri/resources/llamacpp-backend/; \
-	rm -f /tmp/llamacpp-backend.tar.gz; \
-	echo "Downloaded and extracted llamacpp backend successfully"
-	@SIGNING_IDENTITY=$$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/'); \
+	SIGNING_IDENTITY=$$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/'); \
 	if [ -n "$$SIGNING_IDENTITY" ]; then \
 		echo "Signing llamacpp backend binaries..."; \
 		for bin in src-tauri/resources/llamacpp-backend/build/bin/*; do \

@@ -9,6 +9,10 @@ PREFER_JAN_MODELS=false
 JAN_DATA_FOLDER=""
 APP_ARGS=()
 
+ATOMIC_CHAT_DATA_DIR="$HOME/Library/Application Support/Atomic Chat/data"
+EXTENSIONS_CACHE_DIR="$ATOMIC_CHAT_DATA_DIR/extensions"
+EXTENSION_BUNDLE_STAMP="$ATOMIC_CHAT_DATA_DIR/.bundled-preinstall.sha256"
+
 usage() {
   cat <<'EOF'
 Usage: ./start.sh [options] [-- <app args...>]
@@ -24,6 +28,54 @@ Examples:
   ./start.sh --build --prefer-jan-models
   ./start.sh --prefer-jan-models --jan-data-folder "/Users/you/Library/Application Support/Jan/data"
 EOF
+}
+
+extension_bundle_checksum() {
+  local bundle_dir="$1"
+  local files=()
+  local file
+
+  if [[ ! -d "$bundle_dir" ]]; then
+    printf 'missing\n'
+    return
+  fi
+
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    files+=("$file")
+  done < <(find "$bundle_dir" -maxdepth 1 -type f -name '*.tgz' | LC_ALL=C sort)
+
+  if [[ ${#files[@]} -eq 0 ]]; then
+    printf 'empty\n'
+    return
+  fi
+
+  shasum -a 256 "${files[@]}" | shasum -a 256 | awk '{print $1}'
+}
+
+refresh_extension_cache_if_needed() {
+  local bundled_extensions_dir="$SCRIPT_DIR/src-tauri/resources/pre-install"
+  local current_checksum
+  local previous_checksum=""
+
+  mkdir -p "$ATOMIC_CHAT_DATA_DIR"
+  current_checksum="$(extension_bundle_checksum "$bundled_extensions_dir")"
+
+  if [[ -f "$EXTENSION_BUNDLE_STAMP" ]]; then
+    previous_checksum="$(<"$EXTENSION_BUNDLE_STAMP")"
+  fi
+
+  if [[ "$current_checksum" == "$previous_checksum" ]]; then
+    echo "Bundled extensions unchanged; keeping installed extension cache."
+    return
+  fi
+
+  if [[ -d "$EXTENSIONS_CACHE_DIR" ]]; then
+    echo "Bundled extensions changed; refreshing installed extension cache..."
+    rm -rf "$EXTENSIONS_CACHE_DIR"
+  fi
+
+  printf '%s\n' "$current_checksum" > "$EXTENSION_BUNDLE_STAMP"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -81,12 +133,7 @@ APP_CANDIDATES=(
 if [[ "$BUILD_FIRST" == true ]]; then
   echo "Building Atomic Chat macOS app bundle..."
   (cd "$SCRIPT_DIR" && yarn build:tauri:darwin:native)
-
-  EXTENSIONS_CACHE_DIR="$HOME/Library/Application Support/Atomic Chat/data/extensions"
-  if [[ -d "$EXTENSIONS_CACHE_DIR" ]]; then
-    echo "Refreshing installed extension cache..."
-    rm -rf "$EXTENSIONS_CACHE_DIR"
-  fi
+  refresh_extension_cache_if_needed
 fi
 
 LAUNCH_ARGS=("${APP_ARGS[@]}")
