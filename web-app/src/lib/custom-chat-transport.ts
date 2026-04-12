@@ -275,11 +275,11 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
     // Capture the effective provider name early so the Anthropic serial
     // tool-use repair later uses the same value that was used to create the
     // model, even if the user switches provider mid-request.
-    const modelId = useModelProvider.getState().selectedModel?.id
+    const selectedModelId = useModelProvider.getState().selectedModel?.id
     const providerId = useModelProvider.getState().selectedProvider
     const effectiveProviderName = providerId
     const provider = useModelProvider.getState().getProviderByName(providerId)
-    if (this.serviceHub && modelId && provider) {
+    if (this.serviceHub && selectedModelId && provider) {
       try {
         const updatedProvider = useModelProvider
           .getState()
@@ -287,7 +287,10 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
 
         // Get assistant parameters from current assistant
         const currentAssistant = useAssistant.getState().currentAssistant
-        const selectedModel = useModelProvider.getState().selectedModel
+        const providerWithModels = updatedProvider ?? provider
+        const selectedModel =
+          providerWithModels.models.find((model) => model.id === selectedModelId) ??
+          useModelProvider.getState().selectedModel
         const modelInferenceParams = extractProviderModelInferenceParameters(
           providerId,
           selectedModel
@@ -300,8 +303,8 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
         // Create the model using the factory
         // For llamacpp provider, startModel is called internally in ModelFactory.createLlamaCppModel
         this.model = await ModelFactory.createModel(
-          modelId,
-          updatedProvider ?? provider,
+          selectedModelId,
+          providerWithModels,
           inferenceParams
         )
       } catch (error) {
