@@ -20,6 +20,12 @@ import { useAttachments } from '@/hooks/useAttachments'
 import { ExtensionManager } from '@/lib/extension'
 import { ExtensionTypeEnum, VectorDBExtension } from '@janhq/core'
 import { extractProviderModelInferenceParameters } from './provider-model-settings'
+import {
+  ensureVmlxModelServer,
+  scheduleVmlxModelServerStop,
+  stopVmlxModelServer,
+} from './vmlx'
+import { getProviderSettingValue } from './utils'
 
 export type TokenUsageCallback = (
   usage: LanguageModelUsage,
@@ -81,6 +87,44 @@ function prependTextDeltaToUIStream(
     },
     cancel() {
       reader.cancel()
+    },
+  })
+}
+
+function withStreamCleanup(
+  stream: ReadableStream<UIMessageChunk>,
+  cleanup: () => Promise<void> | void
+): ReadableStream<UIMessageChunk> {
+  const reader = stream.getReader()
+  let cleaned = false
+
+  const runCleanup = async () => {
+    if (cleaned) return
+    cleaned = true
+    await cleanup()
+  }
+
+  return new ReadableStream<UIMessageChunk>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read()
+        if (done) {
+          await runCleanup()
+          controller.close()
+          return
+        }
+        controller.enqueue(value)
+      } catch (error) {
+        await runCleanup()
+        controller.error(error)
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason)
+      } finally {
+        await runCleanup()
+      }
     },
   })
 }
@@ -279,6 +323,7 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
     const providerId = useModelProvider.getState().selectedProvider
     const effectiveProviderName = providerId
     const provider = useModelProvider.getState().getProviderByName(providerId)
+    let shouldStopVmlxServer = false
     if (this.serviceHub && selectedModelId && provider) {
       try {
         const updatedProvider = useModelProvider
@@ -291,6 +336,35 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
         const selectedModel =
           providerWithModels.models.find((model) => model.id === selectedModelId) ??
           useModelProvider.getState().selectedModel
+
+        if (providerId === 'vmlx') {
+          const modelRoot = getProviderSettingValue(providerWithModels, 'model-root')
+          const serverCommand = getProviderSettingValue(
+            providerWithModels,
+            'server-command'
+          )
+
+          if (typeof providerWithModels.base_url !== 'string') {
+            throw new Error('VMLX provider requires a configured base URL.')
+          }
+
+          if (typeof modelRoot !== 'string' || modelRoot.trim().length === 0) {
+            throw new Error('VMLX provider requires a configured model root.')
+          }
+
+          await ensureVmlxModelServer({
+            modelId: selectedModelId,
+            modelRoot,
+            baseUrl: providerWithModels.base_url,
+            serverCommand:
+              typeof serverCommand === 'string' && serverCommand.trim().length > 0
+                ? serverCommand
+                : 'vmlx',
+            timeoutSecs: 60,
+          })
+          shouldStopVmlxServer = true
+        }
+
         const modelInferenceParams = extractProviderModelInferenceParameters(
           providerId,
           selectedModel
@@ -313,6 +387,13 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
           inferenceParams
         )
       } catch (error) {
+        if (providerId === 'vmlx' && shouldStopVmlxServer) {
+          try {
+            await stopVmlxModelServer()
+          } catch (stopError) {
+            console.warn('Failed to stop VMLX server after setup error:', stopError)
+          }
+        }
         console.error('Failed to create model:', error)
         throw new Error(
           `Failed to create model: ${error instanceof Error ? error.message : JSON.stringify(error)}`
@@ -393,96 +474,120 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
     // Track stream timing and token count for token speed calculation
     let streamStartTime: number | undefined
 
-    const result = streamText({
-      model: this.model,
-      messages: modelMessages,
-      abortSignal: options.abortSignal,
-      tools: shouldEnableTools ? this.tools : undefined,
-      toolChoice: shouldEnableTools ? 'auto' : undefined,
-      system: this.systemMessage,
-    })
+    let result: ReturnType<typeof streamText>
+    try {
+      result = streamText({
+        model: this.model,
+        messages: modelMessages,
+        abortSignal: options.abortSignal,
+        tools: shouldEnableTools ? this.tools : undefined,
+        toolChoice: shouldEnableTools ? 'auto' : undefined,
+        system: this.systemMessage,
+      })
+    } catch (error) {
+      if (providerId === 'vmlx' && shouldStopVmlxServer) {
+        try {
+          await stopVmlxModelServer()
+        } catch (stopError) {
+          console.warn('Failed to stop VMLX server after stream setup error:', stopError)
+        }
+      }
+      throw error
+    }
 
     let tokensPerSecond = 0
 
-    const uiStream = result.toUIMessageStream({
-      messageMetadata: ({ part }) => {
-        // Track stream start time on start
-        if (part.type === 'start' && !streamStartTime) {
-          streamStartTime = Date.now()
-        }
-
-        if (part.type === 'finish-step') {
-          tokensPerSecond =
-            (part.providerMetadata?.providerMetadata
-              ?.tokensPerSecond as number) || 0
-        }
-
-        // Add usage and token speed to metadata on finish
-        if (part.type === 'finish') {
-          const finishPart = part as {
-            type: 'finish'
-            totalUsage: LanguageModelUsage
-            finishReason: string
-          }
-          const usage = finishPart.totalUsage
-          const durationMs = streamStartTime ? Date.now() - streamStartTime : 0
-          const durationSec = durationMs / 1000
-
-          // Use provider's outputTokens, or llama.cpp completionTokens, or fall back to text delta count
-          const outputTokens = usage?.outputTokens ?? 0
-          const inputTokens = usage?.inputTokens
-
-          // Use llama.cpp's tokens per second if available, otherwise calculate from duration
-          let tokenSpeed: number
-          if (durationSec > 0 && outputTokens > 0) {
-            tokenSpeed =
-              tokensPerSecond > 0 ? tokensPerSecond : outputTokens / durationSec
-          } else {
-            tokenSpeed = 0
+    let uiStream: ReadableStream<UIMessageChunk>
+    try {
+      uiStream = result.toUIMessageStream({
+        messageMetadata: ({ part }) => {
+          // Track stream start time on start
+          if (part.type === 'start' && !streamStartTime) {
+            streamStartTime = Date.now()
           }
 
-          return {
-            finishReason: finishPart.finishReason,
-            usage: {
-              inputTokens: inputTokens,
-              outputTokens: outputTokens,
-              totalTokens:
-                usage?.totalTokens ?? (inputTokens ?? 0) + outputTokens,
-            },
-            tokenSpeed: {
-              tokenSpeed: Math.round(tokenSpeed * 10) / 10, // Round to 1 decimal
-              tokenCount: outputTokens,
-              durationMs,
-            },
+          if (part.type === 'finish-step') {
+            tokensPerSecond =
+              (part.providerMetadata?.providerMetadata
+                ?.tokensPerSecond as number) || 0
           }
-        }
 
-        return undefined
-      },
-      onError: (error) => {
-        const errorMessage = error == null
-          ? 'Unknown error'
-          : typeof error === 'string'
-            ? error
-            : error instanceof Error
-              ? error.message
-              : JSON.stringify(error)
+          // Add usage and token speed to metadata on finish
+          if (part.type === 'finish') {
+            const finishPart = part as {
+              type: 'finish'
+              totalUsage: LanguageModelUsage
+              finishReason: string
+            }
+            const usage = finishPart.totalUsage
+            const durationMs = streamStartTime ? Date.now() - streamStartTime : 0
+            const durationSec = durationMs / 1000
 
-        return errorMessage
-      },
-      onFinish: ({ responseMessage }) => {
-        // Call the token usage callback with usage data when stream completes
-        if (responseMessage) {
-          const metadata = responseMessage.metadata as
-            | Record<string, unknown>
-            | undefined
-          const usage = metadata?.usage as LanguageModelUsage | undefined
-          if (usage) {
-            this.onTokenUsage?.(usage, responseMessage.id)
+            // Use provider's outputTokens, or llama.cpp completionTokens, or fall back to text delta count
+            const outputTokens = usage?.outputTokens ?? 0
+            const inputTokens = usage?.inputTokens
+
+            // Use llama.cpp's tokens per second if available, otherwise calculate from duration
+            let tokenSpeed: number
+            if (durationSec > 0 && outputTokens > 0) {
+              tokenSpeed =
+                tokensPerSecond > 0 ? tokensPerSecond : outputTokens / durationSec
+            } else {
+              tokenSpeed = 0
+            }
+
+            return {
+              finishReason: finishPart.finishReason,
+              usage: {
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                totalTokens:
+                  usage?.totalTokens ?? (inputTokens ?? 0) + outputTokens,
+              },
+              tokenSpeed: {
+                tokenSpeed: Math.round(tokenSpeed * 10) / 10, // Round to 1 decimal
+                tokenCount: outputTokens,
+                durationMs,
+              },
+            }
           }
+
+          return undefined
+        },
+        onError: (error) => {
+          const errorMessage = error == null
+            ? 'Unknown error'
+            : typeof error === 'string'
+              ? error
+              : error instanceof Error
+                ? error.message
+                : JSON.stringify(error)
+
+          return errorMessage
+        },
+        onFinish: ({ responseMessage }) => {
+          // Call the token usage callback with usage data when stream completes
+          if (responseMessage) {
+            const metadata = responseMessage.metadata as
+              | Record<string, unknown>
+              | undefined
+            const usage = metadata?.usage as LanguageModelUsage | undefined
+            if (usage) {
+              this.onTokenUsage?.(usage, responseMessage.id)
+            }
+          }
+        },
+      })
+    } catch (error) {
+      if (providerId === 'vmlx' && shouldStopVmlxServer) {
+        try {
+          await stopVmlxModelServer()
+        } catch (stopError) {
+          console.warn('Failed to stop VMLX server after UI stream setup error:', stopError)
         }
-      },
-    })
+      }
+      throw error
+    }
 
     // When continuing a truncated response, inject the partial content as the
     // very first text-delta so the new message immediately shows it and the
@@ -490,6 +595,26 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
     const finalStream = continueContent
       ? prependTextDeltaToUIStream(uiStream, continueContent)
       : uiStream
+
+    if (providerId === 'vmlx') {
+      const idleTimeoutValue = getProviderSettingValue(provider, 'idle-timeout-secs')
+      const parsedIdleTimeout = Number(idleTimeoutValue)
+      const idleTimeoutSecs =
+        typeof idleTimeoutValue === 'string' &&
+        idleTimeoutValue.trim().length > 0 &&
+        !Number.isNaN(parsedIdleTimeout) &&
+        parsedIdleTimeout > 0
+          ? parsedIdleTimeout
+          : 180
+
+      return withStreamCleanup(finalStream, async () => {
+        try {
+          await scheduleVmlxModelServerStop(idleTimeoutSecs)
+        } catch (error) {
+          console.warn('Failed to schedule VMLX server stop after request:', error)
+        }
+      })
+    }
 
     return finalStream
   }

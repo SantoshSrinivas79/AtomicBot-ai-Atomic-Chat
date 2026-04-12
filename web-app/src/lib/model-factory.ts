@@ -419,6 +419,8 @@ export class ModelFactory {
 
       case 'openai':
         return this.createOpenAIModel(modelId, provider)
+      case 'vmlx':
+        return this.createOpenAICompatibleModel(modelId, provider, parameters)
       case 'google':
       case 'gemini':
       case 'azure':
@@ -804,6 +806,7 @@ export class ModelFactory {
       fetch: createRemoteFetch(httpFetch, normalizedParameters, provider),
     })
 
-    return openAICompatible.languageModel(modelId)
+    const requestModelId = provider.provider === 'vmlx' ? 'local' : modelId
+    return openAICompatible.languageModel(requestModelId)
   }
 }

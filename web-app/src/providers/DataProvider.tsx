@@ -10,6 +10,7 @@ import { useThreads } from '@/hooks/useThreads'
 import { useLocalApiServer } from '@/hooks/useLocalApiServer'
 import { useAppState } from '@/hooks/useAppState'
 import { useAppUpdater } from '@/hooks/useAppUpdater'
+import { withProviderModelSettings } from '@/lib/provider-model-settings'
 import { isDev, isLocalBaseUrl, isLocalProvider as isRuntimeProvider } from '@/lib/utils'
 import { AppEvent, events } from '@janhq/core'
 import { SystemEvent } from '@/types/events'
@@ -29,15 +30,18 @@ type RegisterProviderRequest = {
 }
 
 function mapProviderModelsToModels(
+  providerName: string,
   providerModels: Array<{ id: string; name?: string }>
 ): Model[] {
-  return providerModels.map(({ id, name }) => ({
-    id,
-    model: id,
-    name: name || id,
-    capabilities: ['completion'],
-    version: '1.0',
-  }))
+  return providerModels.map(({ id, name }) =>
+    withProviderModelSettings(providerName, {
+      id,
+      model: id,
+      name: name || id,
+      capabilities: ['completion'],
+      version: '1.0',
+    } as Model)
+  )
 }
 
 function updateLocalProviderModels(providerName: string, importedModels: Model[]) {
@@ -244,7 +248,7 @@ export function DataProvider() {
           if (!providerModels.length) return
           updateLocalProviderModels(
             provider.provider,
-            mapProviderModelsToModels(providerModels)
+            mapProviderModelsToModels(provider.provider, providerModels)
           )
         })
         .catch((error) => {

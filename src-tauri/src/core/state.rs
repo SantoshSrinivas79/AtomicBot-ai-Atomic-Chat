@@ -34,6 +34,21 @@ pub enum RunningServiceEnum {
 }
 pub type SharedMcpServers = Arc<Mutex<HashMap<String, RunningServiceEnum>>>;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VmlxSessionInfo {
+    pub pid: i32,
+    pub port: i32,
+    pub model_id: String,
+    pub model_path: String,
+    pub base_url: String,
+    pub server_command: String,
+}
+
+pub struct VmlxBackendSession {
+    pub child: tokio::process::Child,
+    pub info: VmlxSessionInfo,
+}
+
 #[derive(Default)]
 pub struct AppState {
     pub app_token: Option<String>,
@@ -49,6 +64,10 @@ pub struct AppState {
     pub mcp_server_pids: Arc<Mutex<HashMap<String, u32>>>,
     /// Remote provider configurations (e.g., Anthropic, OpenAI, etc.)
     pub provider_configs: Arc<Mutex<HashMap<String, ProviderConfig>>>,
+    /// Managed local vMLX server session for JANG/VMLX models.
+    pub vmlx_session: Arc<Mutex<Option<VmlxBackendSession>>>,
+    /// Pending idle-unload task for the managed local vMLX server.
+    pub vmlx_unload_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl RunningServiceEnum {
