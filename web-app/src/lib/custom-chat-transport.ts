@@ -14,7 +14,7 @@ import { useServiceStore } from '@/hooks/useServiceHub'
 import { useToolAvailable } from '@/hooks/useToolAvailable'
 import { ModelFactory } from './model-factory'
 import { useModelProvider } from '@/hooks/useModelProvider'
-import { useAssistant } from '@/hooks/useAssistant'
+import { defaultAssistant, useAssistant } from '@/hooks/useAssistant'
 import { useThreads } from '@/hooks/useThreads'
 import { useAttachments } from '@/hooks/useAttachments'
 import { ExtensionManager } from '@/lib/extension'
@@ -295,9 +295,14 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
           providerId,
           selectedModel
         )
+        const assistantParameters =
+          providerId === 'ollama' &&
+          currentAssistant?.id === defaultAssistant.id
+            ? {}
+            : (currentAssistant?.parameters ?? {})
         const inferenceParams = {
           ...modelInferenceParams,
-          ...(currentAssistant?.parameters ?? {}),
+          ...assistantParameters,
         }
 
         // Create the model using the factory
