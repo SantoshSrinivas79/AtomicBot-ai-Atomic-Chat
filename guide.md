@@ -262,6 +262,50 @@ There are multiple local model backends.
 - separate Swift server
 - also exposed through a local API
 
+### Ollama and other local OpenAI-compatible providers
+
+This repo now has a first-class `ollama` provider, but the important lesson is broader:
+local OpenAI-compatible providers behave differently from cloud providers and need their own transport assumptions.
+
+Important defaults:
+
+- Ollama base URL is `http://127.0.0.1:11434/v1`
+- local providers may not need an API key
+- model discovery happens through `GET /v1/models`
+- chat requests go through `POST /v1/chat/completions`
+
+Important implementation notes:
+
+- `web-app/src/constants/providers.ts` defines the built-in `ollama` provider
+- `web-app/src/providers/DataProvider.tsx` must allow loopback providers to register even when `api_key` is empty
+- `web-app/src/providers/DataProvider.tsx` also auto-imports model IDs for active local providers whose model list is still empty
+- `web-app/src/services/providers/tauri.ts` should prefer browser/webview `fetch` for local `/models` requests and only fall back to Tauri HTTP with a timeout
+- `web-app/src/lib/model-factory.ts` should prefer browser/webview `fetch` first for local OpenAI-compatible chat requests too; Tauri HTTP can succeed at the network layer and still leave the UI spinner hanging
+
+Checklist for adding a new local OpenAI-compatible provider:
+
+1. Add the provider definition in `web-app/src/constants/providers.ts`, including a localhost-safe default base URL.
+2. Make sure `web-app/src/providers/DataProvider.tsx` can register the provider even if `api_key` is empty or uses a dummy local key.
+3. Auto-import models from `GET /models` or `GET /v1/models` when the provider is active and the stored model list is empty.
+4. Route local model-list requests through browser/webview `fetch` first, with a timed Tauri fallback instead of an unbounded spinner.
+5. Route local chat/completions requests through browser/webview `fetch` first as well; do not assume the cloud-provider transport path is safe for localhost servers.
+6. Add per-model settings if the runtime has meaningful local knobs such as `thinking`, `reasoning_effort`, `max_tokens`, or runtime-specific options.
+7. Test both packaged-app and dev-app flows. A successful `web-app` build alone does not prove the already-open packaged app is using the new code.
+8. Validate the integration in four steps: terminal curl works, model appears in provider settings, model appears in the picker, and a streamed chat response renders in the UI.
+
+Two specific Ollama lessons from this repo:
+
+1. If Ollama logs `POST /v1/chat/completions 200` but Atomic Chat still spins, the problem is probably frontend transport or stream handling, not Ollama.
+2. Some thinking-capable Ollama models, including `qwen3:4b`, can stream mostly or only `delta.reasoning` on the OpenAI-compatible path. That can make the UI look blank even though the model is actively responding.
+
+Because of that, local provider debugging should always separate:
+
+- server availability
+- model load success
+- model discovery success
+- request transport success
+- streamed response rendering success
+
 ## 8. Important macOS / MLX notes
 
 These are easy to miss.
@@ -363,6 +407,38 @@ Why it exists:
 This is already used for llama.cpp.
 It now also needs to be used for MLX to avoid "server generated but UI hung" behavior.
 
+There is another important variant of this problem:
+
+- for localhost OpenAI-compatible providers like Ollama, browser/webview `fetch` is often more reliable than the Tauri HTTP plugin
+- Tauri HTTP can connect, return `200`, and still leave the UI waiting forever on streamed output
+- for that reason, local OpenAI-compatible chat and model-list requests should try browser/webview `fetch` first and only use Tauri HTTP as a timed fallback
+
+This distinction matters because "local provider" does not always mean "use the same transport as llama.cpp / MLX".
+Those runtimes have custom local bridges; Ollama is a separate local HTTP server and behaves better when treated that way.
+
+### Thinking-model gotcha on Ollama
+
+For some Ollama models, OpenAI-compatible streaming does not look like a normal text stream.
+
+Example behavior seen with `qwen3:4b`:
+
+- streamed chunks contained `delta.reasoning`
+- chunks often had empty `delta.content`
+- non-streaming requests could still return valid final `message.content`
+
+Practical consequence:
+
+- the server can be healthy
+- the request can return `200`
+- the UI can still look blank if the frontend assumes normal streamed `content`
+
+Mitigations used here:
+
+- expose an Ollama per-model `enable_thinking` setting
+- map that to `reasoning_effort` in `web-app/src/lib/model-factory.ts`
+- default Ollama models toward non-thinking chat behavior unless explicitly enabled
+- keep a `reasoning` capability toggle in the model editor for models that genuinely surface reasoning in the UI
+
 ## 11. Tool calling is part of the chat flow
 
 This app does not treat tool calling as an addon. It is built into the chat loop.
@@ -432,6 +508,9 @@ Check:
 - `web-app/src/lib/model-factory.ts`
 - extension streaming parser
 - whether the model produced tool calls instead of plain text
+- whether a local OpenAI-compatible provider is using browser `fetch` or Tauri HTTP
+- whether the model is streaming `reasoning` instead of normal `content`
+- whether Ollama already logged a `200` for the request
 
 ### If model launch fails
 
@@ -483,6 +562,25 @@ Check:
 - provider config
 - session lookup in Rust plugin
 
+### Problem: Ollama model appears in the server but not in the app
+
+Check:
+
+- whether the provider is active
+- whether the base URL is exactly `http://127.0.0.1:11434/v1`
+- whether the app allowed local provider registration without an API key
+- whether `DataProvider` auto-imported models for the empty local provider
+- whether `GET /v1/models` works from the app transport path, not just from terminal
+
+### Problem: Ollama returns `200` but the UI never finishes
+
+Check:
+
+- whether the app is still using the stale packaged build instead of the latest bundle
+- whether the local request is going through browser/webview `fetch` first
+- whether the model is a thinking model streaming `delta.reasoning`
+- whether disabling thinking for that model changes the behavior
+
 ### Problem: UI in browser looks broken compared to desktop app
 
 Likely reason:
@@ -503,6 +601,12 @@ Edits in `src-tauri/` trigger rebuild/restart through Tauri dev flow.
 ### Build script / runtime packaging changes
 
 Changes to Makefile, Tauri configs, bundled binaries, or Swift servers often require a clean restart of the dev process.
+
+For packaged app testing, remember one extra thing:
+
+- rebuilding `web-app` alone is not enough for the already-open release app window
+- if you are testing `src-tauri/target/release/bundle/macos/Atomic Chat.app`, you must rebuild the bundle and relaunch that app
+- otherwise you can easily end up validating a stale packaged build while the source tree already contains the fix
 
 ## 16. Where data lives locally
 
