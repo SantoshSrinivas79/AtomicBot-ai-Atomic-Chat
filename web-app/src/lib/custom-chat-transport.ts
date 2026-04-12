@@ -26,6 +26,7 @@ import {
   stopVmlxModelServer,
 } from './vmlx'
 import { getProviderSettingValue } from './utils'
+import { extractVmlxLaunchConfig } from './vmlx-config'
 
 export type TokenUsageCallback = (
   usage: LanguageModelUsage,
@@ -361,6 +362,7 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
                 ? serverCommand
                 : 'vmlx',
             timeoutSecs: 60,
+            launchConfig: extractVmlxLaunchConfig(providerWithModels),
           })
           shouldStopVmlxServer = true
         }

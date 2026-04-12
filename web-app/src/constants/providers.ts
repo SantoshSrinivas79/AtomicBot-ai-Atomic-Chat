@@ -1,3 +1,5 @@
+import { cloneVmlxProviderSettings } from '@/lib/vmlx-config'
+
 export const openAIProviderSettings = [
   {
     key: 'api-key',
@@ -99,66 +101,7 @@ export const predefinedProviders = [
     base_url: 'http://127.0.0.1:8000/v1',
     explore_models_url: 'https://huggingface.co/JANGQ-AI',
     provider: 'vmlx',
-    settings: [
-      {
-        key: 'api-key',
-        title: 'API Key (optional)',
-        description:
-          'vMLX local development does not require an API key. Leave this empty unless you front the local server with authentication.',
-        controller_type: 'input',
-        controller_props: {
-          placeholder: 'Optional',
-          value: '',
-          type: 'password',
-          input_actions: ['unobscure', 'copy'],
-        },
-      },
-      {
-        key: 'base-url',
-        title: 'Base URL',
-        description:
-          'The local OpenAI-compatible vMLX endpoint. The default is `http://127.0.0.1:8000/v1`.',
-        controller_type: 'input',
-        controller_props: {
-          placeholder: 'http://127.0.0.1:8000/v1',
-          value: 'http://127.0.0.1:8000/v1',
-        },
-      },
-      {
-        key: 'model-root',
-        title: 'Model Root',
-        description:
-          'Root folder scanned for JANG model subfolders. A subfolder is treated as a JANG model when it contains `jang_config.json`.',
-        controller_type: 'input',
-        controller_props: {
-          placeholder: '/Volumes/Extreme Pro/lmstudio/models/JANGQ-AI',
-          value: '/Volumes/Extreme Pro/lmstudio/models/JANGQ-AI',
-        },
-      },
-      {
-        key: 'server-command',
-        title: 'Server Command',
-        description:
-          'Executable used to launch the vMLX server process. The default assumes `vmlx` is available on PATH.',
-        controller_type: 'input',
-        controller_props: {
-          placeholder: 'vmlx',
-          value: 'vmlx',
-        },
-      },
-      {
-        key: 'idle-timeout-secs',
-        title: 'Idle Unload Delay',
-        description:
-          'How long to keep the loaded JANG model warm after a request before unloading it. Use a short idle delay to keep chat responsive without keeping the model resident forever.',
-        controller_type: 'input',
-        controller_props: {
-          placeholder: '180',
-          value: '180',
-          type: 'number',
-        },
-      },
-    ],
+    settings: cloneVmlxProviderSettings(),
     models: [],
   },
   {

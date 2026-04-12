@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { type VmlxLaunchConfig } from './vmlx-config'
 
 export type VmlxDiscoveredModel = {
   id: string
@@ -26,6 +27,7 @@ export async function ensureVmlxModelServer(params: {
   baseUrl: string
   serverCommand: string
   timeoutSecs?: number
+  launchConfig?: VmlxLaunchConfig
 }): Promise<VmlxSessionInfo> {
   return invoke('ensure_vmlx_model_server', params)
 }

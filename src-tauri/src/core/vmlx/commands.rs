@@ -17,6 +17,18 @@ pub struct VmlxDiscoveredModel {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VmlxLaunchConfig {
+    pub continuous_batching: Option<bool>,
+    pub use_paged_cache: Option<bool>,
+    pub kv_cache_quantization: Option<String>,
+    pub cache_memory_percent: Option<f64>,
+    pub cache_ttl_minutes: Option<u64>,
+    pub default_enable_thinking: Option<bool>,
+    pub enable_jit: Option<bool>,
+}
+
 fn is_ignored_entry(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -164,6 +176,7 @@ async fn launch_vmlx_session(
     base_url: &str,
     server_command: &str,
     timeout_secs: u64,
+    launch_config: &VmlxLaunchConfig,
 ) -> Result<VmlxSessionInfo, String> {
     let model_path = model_dir_from_root(model_root, model_id);
     if !model_path.exists() {
@@ -199,6 +212,7 @@ async fn launch_vmlx_session(
         server_command
     };
     let requires_mllm = model_requires_mllm(&model_path);
+    let can_use_batched_runtime = !requires_mllm;
 
     let mut command = Command::new(command_name);
     command
@@ -215,6 +229,70 @@ async fn launch_vmlx_session(
 
     if requires_mllm {
         command.arg("--is-mllm");
+    }
+
+    if launch_config.continuous_batching.unwrap_or(false) && can_use_batched_runtime {
+        command.arg("--continuous-batching");
+    }
+
+    if launch_config.use_paged_cache.unwrap_or(false) && can_use_batched_runtime {
+        command.arg("--use-paged-cache");
+    }
+
+    if can_use_batched_runtime {
+        if let Some(kv_cache_quantization) = launch_config.kv_cache_quantization.as_ref() {
+        match kv_cache_quantization.as_str() {
+            "none" | "q4" | "q8" => {
+                command
+                    .arg("--kv-cache-quantization")
+                    .arg(kv_cache_quantization);
+            }
+            other => {
+                return Err(format!(
+                    "Unsupported VMLX KV cache quantization value `{other}`. Expected one of: none, q4, q8."
+                ));
+            }
+        }
+    }
+    }
+
+    if let Some(cache_memory_percent) = launch_config.cache_memory_percent {
+        if !(0.0..=1.0).contains(&cache_memory_percent) || cache_memory_percent == 0.0 {
+            return Err(
+                "VMLX cache-memory-percent must be greater than 0 and at most 1.0.".to_string(),
+            );
+        }
+
+        if can_use_batched_runtime {
+            command
+                .arg("--cache-memory-percent")
+                .arg(cache_memory_percent.to_string());
+        }
+    }
+
+    if let Some(cache_ttl_minutes) = launch_config.cache_ttl_minutes {
+        if can_use_batched_runtime {
+            command
+                .arg("--cache-ttl-minutes")
+                .arg(cache_ttl_minutes.to_string());
+        }
+    }
+
+    if let Some(default_enable_thinking) = launch_config.default_enable_thinking {
+        command
+            .arg("--default-enable-thinking")
+            .arg(if default_enable_thinking { "true" } else { "false" });
+    }
+
+    if launch_config.enable_jit.unwrap_or(false) {
+        command.arg("--enable-jit");
+    }
+
+    if requires_mllm {
+        log::info!(
+            "VMLX model {} requires MLLM mode; disabling continuous batching, paged cache, KV quantization, and prefix cache tuning for this session",
+            model_id
+        );
     }
 
     let mut child = command
@@ -265,6 +343,7 @@ async fn launch_vmlx_session(
             session_guard.replace(VmlxBackendSession {
                 child,
                 info: session_info.clone(),
+                launch_config: launch_config.clone(),
             });
             log::info!(
                 "VMLX server ready for model {} on {}",
@@ -353,8 +432,10 @@ pub async fn ensure_vmlx_model_server(
     base_url: String,
     server_command: String,
     timeout_secs: Option<u64>,
+    launch_config: Option<VmlxLaunchConfig>,
 ) -> Result<VmlxSessionInfo, String> {
     let timeout_secs = timeout_secs.unwrap_or(60);
+    let launch_config = launch_config.unwrap_or_default();
     cancel_scheduled_unload(state.inner()).await;
 
     {
@@ -362,13 +443,19 @@ pub async fn ensure_vmlx_model_server(
         if let Some(session) = session_guard.as_mut() {
             let same_model = session.info.model_id == model_id;
             let same_base_url = session.info.base_url == base_url;
+            let same_launch_config = session.launch_config == launch_config;
             let process_running = session
                 .child
                 .try_wait()
                 .map_err(|error| format!("Failed to inspect VMLX process: {error}"))?
                 .is_none();
 
-            if same_model && same_base_url && process_running && is_server_ready(&base_url).await {
+            if same_model
+                && same_base_url
+                && same_launch_config
+                && process_running
+                && is_server_ready(&base_url).await
+            {
                 return Ok(session.info.clone());
             }
         }
@@ -382,6 +469,7 @@ pub async fn ensure_vmlx_model_server(
         &base_url,
         &server_command,
         timeout_secs,
+        &launch_config,
     )
     .await
 }

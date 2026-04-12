@@ -14,6 +14,10 @@
   "noModelFound": "No model found",
   "noModelFoundDesc": "Available models will be listed here. If you don't have any models yet, visit the Hub to download.",
   "configuration": "Configuration",
+  "vmlxPresetsTitle": "vMLX Runtime Presets",
+  "vmlxPresetsDescription": "Apply a curated runtime profile instead of hand-tuning low-level vMLX cache flags for each JANG model.",
+  "vmlxPresetAppliedTitle": "vMLX preset applied",
+  "vmlxPresetAppliedDescription": "Updated the provider runtime settings to the {{preset}} profile.",
   "apiEndpoint": "API Endpoint",
   "testConnection": "Test Connection",
   "addModel": {

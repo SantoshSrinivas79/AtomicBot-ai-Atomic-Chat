@@ -383,6 +383,8 @@ Current machine-specific findings:
   - installing `vmlx[vision]`
   - launching with `--is-mllm`
   - serving it as `model="local"` on the OpenAI-compatible API
+- current `vmlx` MLLM continuous-batching is not stable for the local Qwen3.5 JANG VLMs on this machine; first-token prefill can fail inside `mllm_batch_generator` with `AttributeError: 'Qwen3_5Model' object has no attribute 'layers'`
+- because of that, Atomic Chat should force multimodal JANG models onto the simpler `--is-mllm` runtime path and skip continuous batching, paged cache, KV quantization, and prefix-cache tuning for those sessions
 - plain `vmlx doctor` still reports tensor-shape mismatches for the local Qwen3.5 JANG folders, so direct serve tests matter more than doctor alone for these multimodal models
 - `Nemotron-Cascade-2-30B-A3B-JANG_4M` still fails the latest `vmlx doctor` inference check on this machine with unexpected extra parameters during load
 - because of that, Atomic Chat can be wired for vMLX now, but each model should still be treated as provisional until it survives either:
@@ -426,6 +428,40 @@ Practical implementation consequence:
 - model discovery comes from filesystem scan first, not just `GET /v1/models`
 - `GET /v1/models` is still useful as a readiness check after launch
 - request handling must own process start, readiness wait, and teardown
+
+Minimal effective vMLX runtime settings for text-only JANG models:
+
+- `continuous batching`: on
+- `paged KV cache`: on
+- `KV cache quantization`: default to `q8`
+- `prefix cache memory fraction`: keep modest on a `24 GB` Mac; `0.15` is a good default
+- `prefix cache TTL`: short but nonzero; `10` minutes is reasonable
+- `default thinking`: off unless the UI explicitly wants reasoning-mode output
+- `JIT`: on
+
+Important exception:
+
+- if the selected JANG model is actually an MLLM/VLM model being used for text-only chat, prefer the simple MLLM runtime path and do not enable continuous batching or paged/KV-cache optimizations until `vmlx` fixes the current Qwen3.5 MLLM batching bug
+
+Do not dump every `vmlx serve` flag into the UI.
+
+For this app, the high-signal runtime knobs are:
+
+- batching
+- paged cache
+- KV-cache quantization
+- prompt/prefix cache budget
+- prefix cache TTL
+- thinking default
+- JIT
+
+Those settings are coupled enough that the provider page should expose helper presets instead of forcing users to tune them one by one.
+
+Recommended preset shapes:
+
+- `Balanced`: best default for local chat, with `q8` KV cache and a moderate cache budget
+- `Memory Saver`: same general structure, but with `q4` KV cache and a smaller cache budget for larger models
+- `Max Quality`: keep batching/paged cache/JIT, but disable KV quantization
 
 Debugging checklist for VMLX/JANG:
 

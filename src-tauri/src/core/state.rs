@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::core::{downloads::models::DownloadManagerState, mcp::models::McpSettings};
+use super::vmlx::commands::VmlxLaunchConfig;
 use rmcp::{
     model::{CallToolRequestParam, CallToolResult, InitializeRequestParam, Tool},
     service::RunningService,
@@ -47,6 +48,7 @@ pub struct VmlxSessionInfo {
 pub struct VmlxBackendSession {
     pub child: tokio::process::Child,
     pub info: VmlxSessionInfo,
+    pub launch_config: VmlxLaunchConfig,
 }
 
 #[derive(Default)]
