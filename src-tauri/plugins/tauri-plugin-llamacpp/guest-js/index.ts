@@ -194,11 +194,13 @@ export async function isModelSupported(
 
 export async function planModelLoad(
   path: string,
-  ctxSize?: number
+  ctxSize?: number,
+  totalModelBytes?: number
 ): Promise<ModelLoadPlan> {
   return await invoke('plugin:llamacpp|plan_model_load', {
     path,
     ctxSize,
+    totalModelBytes,
   })
 }
 

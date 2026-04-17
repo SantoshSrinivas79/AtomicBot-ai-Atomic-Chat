@@ -2497,10 +2497,11 @@ export default class llamacpp_extension extends AIEngine {
 
   async planModelLoad(
     path: string,
-    ctxSize?: number
+    ctxSize?: number,
+    totalModelBytes?: number
   ): Promise<Awaited<ReturnType<typeof planModelLoad>>> {
     try {
-      return await planModelLoad(path, Number(ctxSize))
+      return await planModelLoad(path, Number(ctxSize), totalModelBytes)
     } catch (e) {
       throw new Error(String(e))
     }

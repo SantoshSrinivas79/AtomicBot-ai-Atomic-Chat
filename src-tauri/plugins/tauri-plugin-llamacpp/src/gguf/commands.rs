@@ -3,7 +3,7 @@ use super::utils::{estimate_kv_cache_internal, read_gguf_metadata_internal};
 use crate::gguf::types::{KVCacheError, KVCacheEstimate, ModelLoadPlan, ModelSupportStatus};
 use std::collections::HashMap;
 use std::fs;
-use tauri_plugin_hardware::get_system_info;
+use tauri_plugin_hardware::{get_system_info, SystemInfo, SystemUsage};
 
 const RESERVE_BYTES: u64 = 2288490189;
 const GPU_RESERVE_BYTES: u64 = 536870912;
@@ -46,7 +46,7 @@ fn choose_context_bucket(max_context: u64, preferred: u64) -> u64 {
         .copied()
         .filter(|bucket| *bucket <= max_context && *bucket <= preferred)
         .max()
-        .unwrap_or(max_context.max(MIN_CONTEXT_SIZE))
+        .unwrap_or(max_context)
 }
 
 fn recommend_batch_size(
@@ -97,10 +97,23 @@ fn summarize_plan(
         ModelSupportStatus::Red => "Exceeds the current memory budget",
     };
 
-    let mut summary = format!(
-        "{}. Recommended context: {}. Recommended batch size: {}.",
-        status_text, recommended_context_size, recommended_batch_size
-    );
+    let mut summary = status_text.to_string();
+
+    if recommended_context_size > 0 {
+        summary.push_str(&format!(
+            ". Recommended context: {}.",
+            recommended_context_size
+        ));
+    } else {
+        summary.push_str(". No safe context fits in memory right now.");
+    }
+
+    if recommended_batch_size > 0 {
+        summary.push_str(&format!(
+            " Recommended batch size: {}.",
+            recommended_batch_size
+        ));
+    }
 
     if let Some(first_warning) = warnings.first() {
         summary.push(' ');
@@ -108,6 +121,177 @@ fn summarize_plan(
     }
 
     summary
+}
+
+fn effective_model_size(model_size: u64, total_model_bytes: Option<u64>) -> u64 {
+    total_model_bytes
+        .filter(|value| *value >= model_size)
+        .unwrap_or(model_size)
+}
+
+async fn plan_model_load_internal(
+    meta: HashMap<String, String>,
+    model_size: u64,
+    ctx_size: Option<u32>,
+    system_info: &SystemInfo,
+    system_usage: &SystemUsage,
+) -> Result<ModelLoadPlan, KVCacheError> {
+    let max_context_from_meta = parse_context_length(&meta).unwrap_or(DEFAULT_CONTEXT_SIZE);
+    let requested_context_size = ctx_size
+        .map(|value| value as u64)
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CONTEXT_SIZE)
+        .min(max_context_from_meta);
+
+    let min_context = MIN_CONTEXT_SIZE.min(max_context_from_meta);
+    let requested_kv =
+        estimate_kv_cache_internal(meta.clone(), Some(requested_context_size)).await?;
+    let minimum_kv = estimate_kv_cache_internal(meta.clone(), Some(min_context)).await?;
+
+    let system_total_bytes = mib_to_bytes(system_info.total_memory);
+    let system_used_bytes = mib_to_bytes(system_usage.used_memory);
+    let gpu_total_bytes = system_usage
+        .gpus
+        .iter()
+        .map(|gpu| mib_to_bytes(gpu.total_memory))
+        .sum::<u64>();
+    let gpu_used_bytes = system_usage
+        .gpus
+        .iter()
+        .map(|gpu| mib_to_bytes(gpu.used_memory))
+        .sum::<u64>();
+
+    let is_unified_memory = system_info.gpus.is_empty();
+    let available_system_memory =
+        available_bytes(system_total_bytes, system_used_bytes, RESERVE_BYTES);
+    let available_gpu_memory = if is_unified_memory {
+        0
+    } else {
+        available_bytes(gpu_total_bytes, gpu_used_bytes, GPU_RESERVE_BYTES)
+    };
+    let available_memory = if is_unified_memory {
+        available_system_memory
+    } else {
+        available_system_memory + available_gpu_memory
+    };
+
+    let requested_total_required = model_size.saturating_add(requested_kv.size);
+    let minimum_total_required = model_size.saturating_add(minimum_kv.size);
+
+    let status = if requested_total_required.saturating_add(SAFETY_MARGIN_BYTES) <= available_memory
+    {
+        ModelSupportStatus::Green
+    } else if minimum_total_required <= available_memory {
+        ModelSupportStatus::Yellow
+    } else {
+        ModelSupportStatus::Red
+    };
+
+    let max_context_size = if requested_kv.per_token_size == 0
+        || available_memory <= model_size.saturating_add(SAFETY_MARGIN_BYTES)
+    {
+        0
+    } else {
+        ((available_memory - model_size - SAFETY_MARGIN_BYTES) / requested_kv.per_token_size)
+            .min(max_context_from_meta)
+    };
+
+    let preferred_context = if status == ModelSupportStatus::Green {
+        requested_context_size
+    } else {
+        max_context_size.saturating_mul(85) / 100
+    };
+    let recommended_context_size = if max_context_size == 0 {
+        0
+    } else if max_context_size >= min_context {
+        choose_context_bucket(max_context_size, preferred_context.max(min_context))
+    } else {
+        max_context_size
+    };
+
+    let recommended_kv = if recommended_context_size > 0 {
+        estimate_kv_cache_internal(meta.clone(), Some(recommended_context_size)).await?
+    } else {
+        KVCacheEstimate {
+            size: 0,
+            per_token_size: requested_kv.per_token_size,
+        }
+    };
+    let recommended_total_required = model_size.saturating_add(recommended_kv.size);
+    let is_moe = detect_moe(&meta);
+    let recommended_batch_size =
+        if recommended_context_size == 0 && status == ModelSupportStatus::Red {
+            0
+        } else {
+            recommend_batch_size(model_size, available_memory, status, is_moe)
+        };
+    let recommended_no_kv_offload = is_unified_memory
+        && (status != ModelSupportStatus::Green
+            || is_moe
+            || model_size.saturating_mul(10) >= system_total_bytes.saturating_mul(6));
+
+    let mut warnings = Vec::new();
+
+    if status == ModelSupportStatus::Red {
+        warnings.push(
+            "Model weights plus a minimal KV cache exceed currently available memory.".to_string(),
+        );
+    } else if status == ModelSupportStatus::Yellow {
+        warnings.push(
+            "Current context is aggressive for the available memory budget; reduce context or batch size."
+                .to_string(),
+        );
+    }
+
+    if requested_context_size > recommended_context_size && recommended_context_size > 0 {
+        warnings.push(format!(
+            "Requested context {} is above the recommended {} for the current machine state.",
+            requested_context_size, recommended_context_size
+        ));
+    }
+
+    if is_unified_memory {
+        warnings.push(
+            "Unified memory systems are sensitive to oversized contexts because weights and KV cache share the same pool."
+                .to_string(),
+        );
+    }
+
+    if is_moe {
+        warnings.push(
+            "GGUF metadata suggests this is a Mixture-of-Experts model; keep context conservative and consider CPU MoE placement if latency spikes."
+                .to_string(),
+        );
+    }
+
+    let memory_headroom = available_memory as i128 - recommended_total_required as i128;
+    let summary = summarize_plan(
+        status,
+        recommended_context_size,
+        recommended_batch_size,
+        &warnings,
+    );
+
+    Ok(ModelLoadPlan {
+        status,
+        is_unified_memory,
+        is_moe,
+        requested_context_size,
+        recommended_context_size,
+        maximum_context_size: max_context_size,
+        recommended_batch_size,
+        recommended_no_kv_offload,
+        model_size,
+        requested_kv_cache_size: requested_kv.size,
+        recommended_kv_cache_size: recommended_kv.size,
+        estimated_total_required: requested_total_required,
+        recommended_total_required,
+        currently_used_memory: system_used_bytes,
+        available_memory,
+        memory_headroom: memory_headroom.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
+        summary,
+        warnings,
+    })
 }
 /// Read GGUF metadata from a model file
 #[tauri::command]
@@ -249,158 +433,121 @@ pub async fn is_model_supported(
 }
 
 #[tauri::command]
-pub async fn plan_model_load(path: String, ctx_size: Option<u32>) -> Result<ModelLoadPlan, String> {
-    let model_size = get_model_size(path.clone()).await?;
+pub async fn plan_model_load(
+    path: String,
+    ctx_size: Option<u32>,
+    total_model_bytes: Option<u64>,
+) -> Result<ModelLoadPlan, String> {
+    let model_size = effective_model_size(get_model_size(path.clone()).await?, total_model_bytes);
     let system_info = get_system_info();
     let system_usage = tauri_plugin_hardware::get_system_usage();
     let gguf = read_gguf_metadata(path).await?;
-    let meta = gguf.metadata;
-
-    let max_context_from_meta = parse_context_length(&meta).unwrap_or(DEFAULT_CONTEXT_SIZE);
-    let requested_context_size = ctx_size
-        .map(|value| value as u64)
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_CONTEXT_SIZE)
-        .min(max_context_from_meta);
-
-    let min_context = MIN_CONTEXT_SIZE.min(max_context_from_meta);
-    let requested_kv = estimate_kv_cache_internal(meta.clone(), Some(requested_context_size))
-        .await
-        .map_err(|err| err.to_string())?;
-    let minimum_kv = estimate_kv_cache_internal(meta.clone(), Some(min_context))
-        .await
-        .map_err(|err| err.to_string())?;
-
-    let system_total_bytes = mib_to_bytes(system_info.total_memory);
-    let system_used_bytes = mib_to_bytes(system_usage.used_memory);
-    let gpu_total_bytes = system_usage
-        .gpus
-        .iter()
-        .map(|gpu| mib_to_bytes(gpu.total_memory))
-        .sum::<u64>();
-    let gpu_used_bytes = system_usage
-        .gpus
-        .iter()
-        .map(|gpu| mib_to_bytes(gpu.used_memory))
-        .sum::<u64>();
-
-    let is_unified_memory = system_info.gpus.is_empty();
-    let available_system_memory =
-        available_bytes(system_total_bytes, system_used_bytes, RESERVE_BYTES);
-    let available_gpu_memory = if is_unified_memory {
-        0
-    } else {
-        available_bytes(gpu_total_bytes, gpu_used_bytes, GPU_RESERVE_BYTES)
-    };
-    let available_memory = if is_unified_memory {
-        available_system_memory
-    } else {
-        available_system_memory + available_gpu_memory
-    };
-
-    let requested_total_required = model_size.saturating_add(requested_kv.size);
-    let minimum_total_required = model_size.saturating_add(minimum_kv.size);
-
-    let status = if requested_total_required.saturating_add(SAFETY_MARGIN_BYTES) <= available_memory
-    {
-        ModelSupportStatus::Green
-    } else if minimum_total_required <= available_memory {
-        ModelSupportStatus::Yellow
-    } else {
-        ModelSupportStatus::Red
-    };
-
-    let max_context_size = if requested_kv.per_token_size == 0
-        || available_memory <= model_size.saturating_add(SAFETY_MARGIN_BYTES)
-    {
-        0
-    } else {
-        ((available_memory - model_size - SAFETY_MARGIN_BYTES) / requested_kv.per_token_size)
-            .min(max_context_from_meta)
-    };
-
-    let preferred_context = if status == ModelSupportStatus::Green {
-        requested_context_size
-    } else {
-        max_context_size.saturating_mul(85) / 100
-    };
-    let recommended_context_size = if max_context_size >= min_context {
-        choose_context_bucket(max_context_size, preferred_context.max(min_context))
-    } else {
-        min_context
-    };
-
-    let recommended_kv = estimate_kv_cache_internal(meta.clone(), Some(recommended_context_size))
-        .await
-        .map_err(|err| err.to_string())?;
-    let recommended_total_required = model_size.saturating_add(recommended_kv.size);
-    let is_moe = detect_moe(&meta);
-    let recommended_batch_size = recommend_batch_size(model_size, available_memory, status, is_moe);
-    let recommended_no_kv_offload = is_unified_memory
-        && (status != ModelSupportStatus::Green
-            || is_moe
-            || model_size.saturating_mul(10) >= system_total_bytes.saturating_mul(6));
-
-    let mut warnings = Vec::new();
-
-    if status == ModelSupportStatus::Red {
-        warnings.push(
-            "Model weights plus a minimal KV cache exceed currently available memory.".to_string(),
-        );
-    } else if status == ModelSupportStatus::Yellow {
-        warnings.push(
-            "Current context is aggressive for the available memory budget; reduce context or batch size."
-                .to_string(),
-        );
-    }
-
-    if requested_context_size > recommended_context_size {
-        warnings.push(format!(
-            "Requested context {} is above the recommended {} for the current machine state.",
-            requested_context_size, recommended_context_size
-        ));
-    }
-
-    if is_unified_memory {
-        warnings.push(
-            "Unified memory systems are sensitive to oversized contexts because weights and KV cache share the same pool."
-                .to_string(),
-        );
-    }
-
-    if is_moe {
-        warnings.push(
-            "GGUF metadata suggests this is a Mixture-of-Experts model; keep context conservative and consider CPU MoE placement if latency spikes."
-                .to_string(),
-        );
-    }
-
-    let memory_headroom = available_memory as i128 - recommended_total_required as i128;
-    let summary = summarize_plan(
-        status,
-        recommended_context_size,
-        recommended_batch_size,
-        &warnings,
-    );
-
-    Ok(ModelLoadPlan {
-        status,
-        is_unified_memory,
-        is_moe,
-        requested_context_size,
-        recommended_context_size,
-        maximum_context_size: max_context_size,
-        recommended_batch_size,
-        recommended_no_kv_offload,
+    plan_model_load_internal(
+        gguf.metadata,
         model_size,
-        requested_kv_cache_size: requested_kv.size,
-        recommended_kv_cache_size: recommended_kv.size,
-        estimated_total_required: requested_total_required,
-        recommended_total_required,
-        currently_used_memory: system_used_bytes,
-        available_memory,
-        memory_headroom: memory_headroom.clamp(i64::MIN as i128, i64::MAX as i128) as i64,
-        summary,
-        warnings,
-    })
+        ctx_size,
+        &system_info,
+        &system_usage,
+    )
+    .await
+    .map_err(|err| err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri_plugin_hardware::{CpuStaticInfo, GpuUsage, SystemInfo, SystemUsage};
+
+    fn fake_system_info(total_memory_mib: u64) -> SystemInfo {
+        SystemInfo {
+            cpu: CpuStaticInfo {
+                name: "Apple M".to_string(),
+                core_count: 10,
+                arch: "aarch64".to_string(),
+                extensions: vec![],
+            },
+            os_type: "macos".to_string(),
+            os_name: "macOS".to_string(),
+            total_memory: total_memory_mib,
+            gpus: vec![],
+        }
+    }
+
+    fn fake_system_usage(total_memory_mib: u64, used_memory_mib: u64) -> SystemUsage {
+        SystemUsage {
+            cpu: 0.0,
+            used_memory: used_memory_mib,
+            total_memory: total_memory_mib,
+            gpus: Vec::<GpuUsage>::new(),
+        }
+    }
+
+    fn test_meta(context_length: u64) -> HashMap<String, String> {
+        HashMap::from([
+            ("general.architecture".to_string(), "llama".to_string()),
+            ("llama.block_count".to_string(), "40".to_string()),
+            ("llama.attention.head_count".to_string(), "32".to_string()),
+            ("llama.attention.head_count_kv".to_string(), "8".to_string()),
+            ("llama.attention.key_length".to_string(), "128".to_string()),
+            (
+                "llama.attention.value_length".to_string(),
+                "128".to_string(),
+            ),
+            (
+                "llama.context_length".to_string(),
+                context_length.to_string(),
+            ),
+        ])
+    }
+
+    #[tokio::test]
+    async fn red_plan_does_not_recommend_fake_minimum_context() {
+        let plan = plan_model_load_internal(
+            test_meta(8192),
+            20 * 1024 * 1024 * 1024,
+            Some(8192),
+            &fake_system_info(24 * 1024),
+            &fake_system_usage(24 * 1024, 21 * 1024),
+        )
+        .await
+        .expect("plan");
+
+        assert_eq!(plan.status, ModelSupportStatus::Red);
+        assert_eq!(plan.maximum_context_size, 0);
+        assert_eq!(plan.recommended_context_size, 0);
+        assert_eq!(plan.recommended_batch_size, 0);
+        assert!(plan
+            .summary
+            .contains("No safe context fits in memory right now."));
+    }
+
+    #[tokio::test]
+    async fn additional_model_bytes_reduce_context_budget() {
+        let system_info = fake_system_info(24 * 1024);
+        let system_usage = fake_system_usage(24 * 1024, 6 * 1024);
+
+        let base_plan = plan_model_load_internal(
+            test_meta(65536),
+            13 * 1024 * 1024 * 1024,
+            Some(8192),
+            &system_info,
+            &system_usage,
+        )
+        .await
+        .expect("base plan");
+        let larger_plan = plan_model_load_internal(
+            test_meta(65536),
+            14 * 1024 * 1024 * 1024,
+            Some(8192),
+            &system_info,
+            &system_usage,
+        )
+        .await
+        .expect("larger plan");
+
+        assert!(larger_plan.model_size > base_plan.model_size);
+        assert!(larger_plan.estimated_total_required > base_plan.estimated_total_required);
+        assert!(larger_plan.maximum_context_size < base_plan.maximum_context_size);
+        assert!(larger_plan.recommended_context_size <= base_plan.recommended_context_size);
+    }
 }

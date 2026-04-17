@@ -40,7 +40,9 @@ export const ModelSupportStatus = ({
           return null
         }
 
-        return await serviceHub.models().planModelLoad(model.path, ctxSize)
+        return await serviceHub
+          .models()
+          .planModelLoad(model.path, ctxSize, model.sizeBytes)
       } catch (error) {
         console.error('Error planning model load with path resolution:', error)
         return null
@@ -137,12 +139,16 @@ export const ModelSupportStatus = ({
             <p>{getStatusTooltip()}</p>
             {loadPlan && (
               <div className="text-xs text-muted-foreground space-y-1">
-                <p>
-                  Recommended context: {loadPlan.recommended_context_size}
-                </p>
-                <p>
-                  Recommended batch size: {loadPlan.recommended_batch_size}
-                </p>
+                {loadPlan.recommended_context_size > 0 && (
+                  <p>
+                    Recommended context: {loadPlan.recommended_context_size}
+                  </p>
+                )}
+                {loadPlan.recommended_batch_size > 0 && (
+                  <p>
+                    Recommended batch size: {loadPlan.recommended_batch_size}
+                  </p>
+                )}
                 {loadPlan.warnings.slice(0, 2).map((warning) => (
                   <p key={warning}>{warning}</p>
                 ))}

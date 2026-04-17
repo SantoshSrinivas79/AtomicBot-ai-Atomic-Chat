@@ -389,7 +389,11 @@ export class DefaultModelsService implements ModelsService {
               ? parseInt(settings.ctx_size, 10)
               : 8192
 
-        const plan = await this.planModelLoad(modelPath, requestedContext)
+        const plan = await this.planModelLoad(
+          modelPath,
+          requestedContext,
+          modelInfo?.sizeBytes
+        )
 
         if (plan?.status === 'RED' && plan.maximum_context_size === 0) {
           throw new Error(plan.summary)
@@ -592,14 +596,19 @@ export class DefaultModelsService implements ModelsService {
 
   async planModelLoad(
     modelPath: string,
-    ctxSize?: number
+    ctxSize?: number,
+    totalModelBytes?: number
   ): Promise<ModelLoadPlan | null> {
     try {
       const engine = this.getEngine('llamacpp') as AIEngine & {
-        planModelLoad?: (path: string, ctx_size?: number) => Promise<ModelLoadPlan>
+        planModelLoad?: (
+          path: string,
+          ctx_size?: number,
+          total_model_bytes?: number
+        ) => Promise<ModelLoadPlan>
       }
       if (engine && typeof engine.planModelLoad === 'function') {
-        return await engine.planModelLoad(modelPath, ctxSize)
+        return await engine.planModelLoad(modelPath, ctxSize, totalModelBytes)
       }
       console.warn('planModelLoad method not available in llamacpp engine')
       return null

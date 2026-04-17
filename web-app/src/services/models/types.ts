@@ -174,7 +174,8 @@ export interface ModelsService {
   ): Promise<'RED' | 'YELLOW' | 'GREEN' | 'GREY'>
   planModelLoad(
     modelPath: string,
-    ctxSize?: number
+    ctxSize?: number,
+    totalModelBytes?: number
   ): Promise<ModelLoadPlan | null>
   validateGgufFile(filePath: string): Promise<ModelValidationResult>
   getTokensCount(modelId: string, messages: ThreadMessage[]): Promise<number>

@@ -335,6 +335,7 @@ describe('DefaultModelsService', () => {
       mockEngine.get.mockResolvedValue({
         id: 'model1',
         path: '/path/to/model.gguf',
+        sizeBytes: 6442450944,
       })
       mockEngine.planModelLoad.mockResolvedValue({
         status: 'YELLOW',
@@ -351,7 +352,8 @@ describe('DefaultModelsService', () => {
       expect(result).toEqual(mockSession)
       expect(mockEngine.planModelLoad).toHaveBeenCalledWith(
         '/path/to/model.gguf',
-        8192
+        8192,
+        6442450944
       )
       expect(mockEngine.load).toHaveBeenCalledWith(
         'model1',
@@ -384,6 +386,7 @@ describe('DefaultModelsService', () => {
       mockEngine.get.mockResolvedValue({
         id: 'model1',
         path: '/path/to/model.gguf',
+        sizeBytes: 21474836480,
       })
       mockEngine.planModelLoad.mockResolvedValue({
         status: 'RED',
@@ -1010,12 +1013,17 @@ describe('DefaultModelsService', () => {
       }
       mockEngine.planModelLoad.mockResolvedValue(plan)
 
-      const result = await modelsService.planModelLoad('/path/to/model.gguf', 8192)
+      const result = await modelsService.planModelLoad(
+        '/path/to/model.gguf',
+        8192,
+        6442450944
+      )
 
       expect(result).toEqual(plan)
       expect(mockEngine.planModelLoad).toHaveBeenCalledWith(
         '/path/to/model.gguf',
-        8192
+        8192,
+        6442450944
       )
     })
 
