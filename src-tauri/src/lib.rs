@@ -119,6 +119,11 @@ pub fn run() {
         core::server::remote_provider_commands::unregister_provider_config,
         core::server::remote_provider_commands::get_provider_config,
         core::server::remote_provider_commands::list_provider_configs,
+        core::vmlx::commands::list_vmlx_jang_models,
+        core::vmlx::commands::ensure_vmlx_model_server,
+        core::vmlx::commands::stop_vmlx_model_server,
+        core::vmlx::commands::schedule_vmlx_model_server_stop,
+        core::vmlx::commands::get_vmlx_server_status,
         // MCP commands
         core::mcp::commands::get_tools,
         core::mcp::commands::call_tool,
@@ -206,6 +211,11 @@ pub fn run() {
         core::server::remote_provider_commands::get_provider_config,
         core::server::remote_provider_commands::list_provider_configs,
         core::server::remote_provider_commands::abort_remote_stream,
+        core::vmlx::commands::list_vmlx_jang_models,
+        core::vmlx::commands::ensure_vmlx_model_server,
+        core::vmlx::commands::stop_vmlx_model_server,
+        core::vmlx::commands::schedule_vmlx_model_server_stop,
+        core::vmlx::commands::get_vmlx_server_status,
         // MCP commands
         core::mcp::commands::get_tools,
         core::mcp::commands::call_tool,
@@ -248,6 +258,8 @@ pub fn run() {
             background_cleanup_handle: Arc::new(Mutex::new(None)),
             mcp_server_pids: Arc::new(Mutex::new(HashMap::new())),
             provider_configs: Arc::new(Mutex::new(HashMap::new())),
+            vmlx_session: Arc::new(Mutex::new(None)),
+            vmlx_unload_task: Arc::new(Mutex::new(None)),
         })
         .setup(|app| {
             app.handle().plugin(
@@ -393,6 +405,8 @@ pub fn run() {
                         cleanup_processes(&app_handle).await;
                         log::info!("Foundation Models processes cleaned up successfully");
                     }
+
+                    crate::core::vmlx::commands::cleanup_vmlx_session(&state).await;
 
                     log::info!("App cleanup completed");
                 });

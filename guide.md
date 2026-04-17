@@ -133,10 +133,32 @@ yarn dev
 or
 
 ```bash
-yarn dev:tauri
+yarn dev:tauri:fast
 ```
 
-On macOS, `yarn dev:tauri` now uses the mac-specific Tauri config.
+If you prefer the repo launcher wrapper:
+
+```bash
+./start.sh --dev
+```
+
+On macOS, `yarn dev` now uses the fast Tauri path:
+
+- reuses existing local binaries when present
+- skips icon regeneration
+- avoids the heavier full build/bootstrap path
+
+Use the heavier path only when you actually need it:
+
+```bash
+yarn dev:tauri:full
+```
+
+Or:
+
+```bash
+./start.sh --dev-full
+```
 
 ### Frontend-only dev server
 
@@ -305,6 +327,153 @@ Because of that, local provider debugging should always separate:
 - model discovery success
 - request transport success
 - streamed response rendering success
+
+### VMLX and JANG models
+
+If we add JANG support, treat it as a separate local runtime path.
+
+Do not treat JANG folders as:
+
+- standard `llamacpp` / GGUF models
+- standard bundled `mlx-server` models
+- normal cloud-style remote providers
+
+JANG models are MLX-native safetensors with JANG-specific metadata such as `jang_config.json`.
+That means they need a JANG-aware runtime.
+
+The runtime assumption for this branch is:
+
+- use `vMLX` (`vmlx`) as the server
+- expose it to Atomic Chat through its localhost OpenAI-compatible API
+- keep the model root configurable, but default to:
+  `/Volumes/Extreme Pro/lmstudio/models/JANGQ-AI`
+
+Primary source notes:
+
+- `vmlx` is an OpenAI-compatible Apple Silicon server and CLI
+- it exposes `base_url=http://localhost:<port>/v1`
+- it can inspect local JANG folders directly via `vmlx info`, `vmlx list`, and `vmlx doctor`
+- the server should be launched with `--served-model-name local` so the client can consistently call `model="local"`
+- it supports continuous batching, paged cache, KV-cache quantization, speculative decoding, and reasoning/tool parsers
+- current public examples use `model="local"` in OpenAI-compatible client calls, not `model="default"`
+
+What is actually in the current JANG model root:
+
+- `Qwen3.5-9B-JANG_4S`
+- `Qwen3.5-27B-JANG_4S`
+- `Qwen3.5-35B-A3B-JANG_4K`
+- `Nemotron-Cascade-2-30B-A3B-JANG_4M`
+
+These folders contain the expected JANG-style signatures:
+
+- `config.json`
+- `tokenizer.json` / tokenizer config files
+- sharded `model-*.safetensors`
+- `model.safetensors.index.json`
+- `jang_config.json`
+
+Current machine-specific findings:
+
+- the local `vmlx` install was stale and needed an upgrade before testing; the upgraded tool is `vmlx 1.3.35`
+- the Qwen3.5 JANG folders also needed the `vision` extra installed (`vmlx[vision]`) because the correct load path uses the MLLM stack
+- the external model root had macOS AppleDouble sidecar files (`._*`) that broke `vmlx doctor` until the folder was cleaned with `dot_clean -m`
+- `vmlx doctor` is not sufficient by itself for the local Qwen3.5 JANG folders on this machine, because they need the multimodal load path
+- `Qwen3.5-9B-JANG_4S` now serves successfully after:
+  - upgrading to `vmlx 1.3.35`
+  - installing `vmlx[vision]`
+  - launching with `--is-mllm`
+  - serving it as `model="local"` on the OpenAI-compatible API
+- current `vmlx` MLLM continuous-batching is not stable for the local Qwen3.5 JANG VLMs on this machine; first-token prefill can fail inside `mllm_batch_generator` with `AttributeError: 'Qwen3_5Model' object has no attribute 'layers'`
+- because of that, Atomic Chat should force multimodal JANG models onto the simpler `--is-mllm` runtime path and skip continuous batching, paged cache, KV quantization, and prefix-cache tuning for those sessions
+- plain `vmlx doctor` still reports tensor-shape mismatches for the local Qwen3.5 JANG folders, so direct serve tests matter more than doctor alone for these multimodal models
+- `Nemotron-Cascade-2-30B-A3B-JANG_4M` still fails the latest `vmlx doctor` inference check on this machine with unexpected extra parameters during load
+- because of that, Atomic Chat can be wired for vMLX now, but each model should still be treated as provisional until it survives either:
+  - `vmlx doctor <model-dir>` for text-only models, or
+  - an actual `vmlx serve ...` smoke test for multimodal JANG models
+
+Design rule:
+
+- if a folder has `jang_config.json`, it should be routed to the VMLX/JANG path, not to bundled MLX or llama.cpp
+
+Recommended integration model:
+
+1. Add a new local provider for VMLX, separate from the built-in MLX plugin.
+2. Add a configurable `model_root` setting with the default JANGQ-AI path above.
+3. Discover models by scanning subfolders under `model_root` for `jang_config.json`.
+4. Register discovered models in the provider UI without pre-loading them.
+5. When a request targets one of these models, Atomic Chat should ensure the VMLX server is serving that exact folder.
+6. If a different JANG model is already loaded, stop or unload the current server-managed model first.
+7. Wait for VMLX readiness via health check plus `GET /v1/models` before forwarding chat traffic.
+8. After the request completes, unload the model or stop the VMLX process instead of keeping it resident forever.
+
+The important architecture constraint is this:
+
+- current `vmlx` docs show one served local model per server process
+- so Atomic Chat should manage model lifecycle explicitly
+- do not assume vMLX can hot-swap arbitrary JANG folders inside one long-lived process without app coordination
+
+That makes this path closer to the existing local engine plugins than to Ollama's always-on library model, even though the transport should still look like a localhost OpenAI-compatible provider.
+
+Operational goals for VMLX/JANG:
+
+- discover models from disk, not from a remote catalog
+- load a model on demand for the active request
+- use localhost OpenAI-compatible chat endpoints for inference
+- unload after completion or after a short idle window
+- keep the filesystem root configurable because the user may store JANG models on external volumes
+
+Practical implementation consequence:
+
+- provider settings need both `base_url` and `model_root`
+- model discovery comes from filesystem scan first, not just `GET /v1/models`
+- `GET /v1/models` is still useful as a readiness check after launch
+- request handling must own process start, readiness wait, and teardown
+
+Minimal effective vMLX runtime settings for text-only JANG models:
+
+- `continuous batching`: on
+- `paged KV cache`: on
+- `KV cache quantization`: default to `q8`
+- `prefix cache memory fraction`: keep modest on a `24 GB` Mac; `0.15` is a good default
+- `prefix cache TTL`: short but nonzero; `10` minutes is reasonable
+- `default thinking`: off unless the UI explicitly wants reasoning-mode output
+- `JIT`: on
+
+Important exception:
+
+- if the selected JANG model is actually an MLLM/VLM model being used for text-only chat, prefer the simple MLLM runtime path and do not enable continuous batching or paged/KV-cache optimizations until `vmlx` fixes the current Qwen3.5 MLLM batching bug
+
+Do not dump every `vmlx serve` flag into the UI.
+
+For this app, the high-signal runtime knobs are:
+
+- batching
+- paged cache
+- KV-cache quantization
+- prompt/prefix cache budget
+- prefix cache TTL
+- thinking default
+- JIT
+
+Those settings are coupled enough that the provider page should expose helper presets instead of forcing users to tune them one by one.
+
+Recommended preset shapes:
+
+- `Balanced`: best default for local chat, with `q8` KV cache and a moderate cache budget
+- `Memory Saver`: same general structure, but with `q4` KV cache and a smaller cache budget for larger models
+- `Max Quality`: keep batching/paged cache/JIT, but disable KV quantization
+
+Debugging checklist for VMLX/JANG:
+
+- whether the configured `model_root` exists and is mounted
+- whether the chosen model folder contains `jang_config.json`
+- whether the app launched `vmlx serve` for the requested folder with `--served-model-name local`
+- whether localhost health and `GET /v1/models` are reachable before chat starts
+- whether the requested model is the currently served local model
+- whether the app tears the process down after the request instead of leaking resident models
+- whether the model directory contains macOS `._*` sidecar files; if it does, clean it with `dot_clean -m`
+- whether `vmlx doctor <model-dir>` passes an inference test before wiring the model into the UI
+- whether a Qwen3.5 JANG folder was launched with `--is-mllm` and the `vmlx[vision]` extra installed
 
 ## 8. Important macOS / MLX notes
 

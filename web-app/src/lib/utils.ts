@@ -80,6 +80,8 @@ export function getProviderLogo(provider: string) {
       return '/images/model-provider/llamacpp.svg'
     case 'mlx':
       return '/images/model-provider/mlx.png'
+    case 'vmlx':
+      return '/images/model-provider/mlx.png'
     case 'ollama':
       return '/images/model-provider/ollama.svg'
     case 'anthropic':
@@ -119,6 +121,8 @@ export const getProviderTitle = (provider: string) => {
       return 'Llama.cpp'
     case 'mlx':
       return 'MLX'
+    case 'vmlx':
+      return 'vMLX'
     case 'ollama':
       return 'Ollama'
     case 'openai':
@@ -165,6 +169,20 @@ export function isLocalProviderConfig(
     isLocalProvider(provider.provider) ||
     isLocalBaseUrl(provider.base_url)
   )
+}
+
+export function getProviderSetting(
+  provider: Pick<ModelProvider, 'settings'> | null | undefined,
+  key: string
+) {
+  return provider?.settings?.find((setting) => setting.key === key)
+}
+
+export function getProviderSettingValue(
+  provider: Pick<ModelProvider, 'settings'> | null | undefined,
+  key: string
+) {
+  return getProviderSetting(provider, key)?.controller_props?.value
 }
 
 export function getReadableLanguageName(language: string): string {

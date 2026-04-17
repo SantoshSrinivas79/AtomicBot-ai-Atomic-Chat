@@ -1,3 +1,5 @@
+import { cloneVmlxProviderSettings } from '@/lib/vmlx-config'
+
 export const openAIProviderSettings = [
   {
     key: 'api-key',
@@ -91,6 +93,15 @@ export const predefinedProviders = [
         },
       },
     ],
+    models: [],
+  },
+  {
+    active: true,
+    api_key: '',
+    base_url: 'http://127.0.0.1:8000/v1',
+    explore_models_url: 'https://huggingface.co/JANGQ-AI',
+    provider: 'vmlx',
+    settings: cloneVmlxProviderSettings(),
     models: [],
   },
   {

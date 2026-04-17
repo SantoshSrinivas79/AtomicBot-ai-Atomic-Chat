@@ -9,9 +9,10 @@ import { ModelCapabilities } from '@/types/models'
 import { modelSettings } from '@/lib/predefined'
 import { ExtensionManager } from '@/lib/extension'
 import { fetch as fetchTauri } from '@tauri-apps/plugin-http'
+import { listVmlxJangModels } from '@/lib/vmlx'
 import { DefaultProvidersService } from './default'
 import { getModelCapabilities } from '@/lib/models'
-import { isLocalBaseUrl } from '@/lib/utils'
+import { getProviderSettingValue, isLocalBaseUrl } from '@/lib/utils'
 import type { ProviderModelOption } from './types'
 
 export class TauriProvidersService extends DefaultProvidersService {
@@ -228,6 +229,16 @@ export class TauriProvidersService extends DefaultProvidersService {
   }
 
   async fetchModelsFromProvider(provider: ModelProvider): Promise<ProviderModelOption[]> {
+    if (provider.provider === 'vmlx') {
+      const modelRoot = getProviderSettingValue(provider, 'model-root')
+
+      if (typeof modelRoot !== 'string' || modelRoot.trim().length === 0) {
+        throw new Error('VMLX provider must have model_root configured')
+      }
+
+      return listVmlxJangModels(modelRoot)
+    }
+
     if (!provider.base_url) {
       throw new Error('Provider must have base_url configured')
     }

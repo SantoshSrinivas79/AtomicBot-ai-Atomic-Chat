@@ -42,6 +42,11 @@ import { useAppState } from '@/hooks/useAppState'
 import { useShallow } from 'zustand/shallow'
 import { DialogAddModel } from '@/containers/dialogs/AddModel'
 import { withProviderModelSettings } from '@/lib/provider-model-settings'
+import {
+  applyVmlxPresetToSettings,
+  getMatchingVmlxPresetId,
+  vmlxProviderPresets,
+} from '@/lib/vmlx-config'
 
 // as route.threadsDetail
 export const Route = createFileRoute('/settings/providers/$providerName')({
@@ -71,6 +76,8 @@ function ProviderDetail() {
   const { providerName } = useParams({ from: Route.id })
   const { getProviderByName, setProviders, updateProvider } = useModelProvider()
   const provider = getProviderByName(providerName)
+  const selectedVmlxPresetId =
+    provider?.provider === 'vmlx' ? getMatchingVmlxPresetId(provider) : null
 
   // Check if llamacpp/mlx provider needs backend configuration
   const needsBackendConfig =
@@ -270,6 +277,59 @@ function ProviderDetail() {
     }
   }
 
+  const persistProviderSettings = useCallback(
+    (nextSettings: ProviderSetting[]) => {
+      if (!provider) return
+
+      const updateObj: Partial<ModelProvider> = {
+        settings: nextSettings,
+      }
+
+      const apiKeySetting = nextSettings.find((setting) => setting.key === 'api-key')
+      const baseUrlSetting = nextSettings.find(
+        (setting) => setting.key === 'base-url'
+      )
+
+      if (typeof apiKeySetting?.controller_props.value === 'string') {
+        updateObj.api_key = apiKeySetting.controller_props.value
+      }
+
+      if (typeof baseUrlSetting?.controller_props.value === 'string') {
+        updateObj.base_url = baseUrlSetting.controller_props.value
+      }
+
+      serviceHub.providers().updateSettings(providerName, nextSettings)
+      updateProvider(providerName, {
+        ...provider,
+        ...updateObj,
+      })
+
+      serviceHub.models().stopAllModels()
+      serviceHub
+        .models()
+        .getActiveModels()
+        .then((models) => setActiveModels(models || []))
+    },
+    [provider, providerName, serviceHub, setActiveModels, updateProvider]
+  )
+
+  const handleApplyVmlxPreset = useCallback(
+    (presetId: (typeof vmlxProviderPresets)[number]['id']) => {
+      if (!provider || provider.provider !== 'vmlx') return
+
+      const nextSettings = applyVmlxPresetToSettings(provider.settings, presetId)
+      persistProviderSettings(nextSettings)
+
+      const preset = vmlxProviderPresets.find((entry) => entry.id === presetId)
+      toast.success(t('providers:vmlxPresetAppliedTitle'), {
+        description: t('providers:vmlxPresetAppliedDescription', {
+          preset: preset?.label ?? presetId,
+        }),
+      })
+    },
+    [persistProviderSettings, provider, t]
+  )
+
   const handleStartModel = async (modelId: string) => {
     // Add model to loading state
     setLoadingModels((prev) => [...prev, modelId])
@@ -409,6 +469,36 @@ function ProviderDetail() {
                   'flex-col-reverse'
               )}
             >
+              {provider?.provider === 'vmlx' && (
+                <Card>
+                  <CardItem
+                    align="start"
+                    title={t('providers:vmlxPresetsTitle')}
+                    description={t('providers:vmlxPresetsDescription')}
+                    actions={
+                      <div className="flex max-w-md flex-wrap gap-2">
+                        {vmlxProviderPresets.map((preset) => (
+                          <Button
+                            key={preset.id}
+                            type="button"
+                            size="sm"
+                            variant={
+                              selectedVmlxPresetId === preset.id
+                                ? 'secondary'
+                                : 'outline'
+                            }
+                            title={preset.description}
+                            onClick={() => handleApplyVmlxPreset(preset.id)}
+                          >
+                            {preset.label}
+                          </Button>
+                        ))}
+                      </div>
+                    }
+                  />
+                </Card>
+              )}
+
               {/* Settings */}
               <Card>
                 {provider?.settings.map((setting, settingIndex) => {
@@ -481,24 +571,7 @@ function ProviderDetail() {
                                 }
                               }
 
-                              serviceHub
-                                .providers()
-                                .updateSettings(
-                                  providerName,
-                                  updateObj.settings ?? []
-                                )
-                              updateProvider(providerName, {
-                                ...provider,
-                                ...updateObj,
-                              })
-
-                              serviceHub.models().stopAllModels()
-
-                              // Refresh active models after stopping
-                              serviceHub
-                                .models()
-                                .getActiveModels()
-                                .then((models) => setActiveModels(models || []))
+                              persistProviderSettings(updateObj.settings ?? [])
                             }
                           }}
                         />
