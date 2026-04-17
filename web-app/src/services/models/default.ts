@@ -400,6 +400,14 @@ export class DefaultModelsService implements ModelsService {
         }
 
         if (plan) {
+          const recommendedContext =
+            plan.is_moe && plan.is_unified_memory
+              ? Math.min(plan.recommended_context_size, 4096)
+              : plan.recommended_context_size
+          const recommendedBatchSize =
+            plan.is_moe && plan.is_unified_memory
+              ? Math.min(plan.recommended_batch_size, 64)
+              : plan.recommended_batch_size
           const currentContext = Number(settings.ctx_size ?? 8192)
           const currentBatchSize = Number(settings.batch_size ?? 2048)
           const currentContextIsDefault =
@@ -408,16 +416,16 @@ export class DefaultModelsService implements ModelsService {
             !Number.isFinite(currentBatchSize) || currentBatchSize === 2048
 
           if (
-            plan.recommended_context_size > 0 &&
+            recommendedContext > 0 &&
             (currentContextIsDefault ||
               (plan.maximum_context_size > 0 &&
                 currentContext > plan.maximum_context_size))
           ) {
-            settings.ctx_size = plan.recommended_context_size
+            settings.ctx_size = recommendedContext
           }
 
-          if (plan.recommended_batch_size > 0 && currentBatchIsDefault) {
-            settings.batch_size = plan.recommended_batch_size
+          if (recommendedBatchSize > 0 && currentBatchIsDefault) {
+            settings.batch_size = recommendedBatchSize
           }
 
           if (
