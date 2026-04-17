@@ -28,6 +28,41 @@ import type {
 // TODO: Replace this with the actual provider later
 const defaultProvider = 'llamacpp'
 
+type UnifiedMemoryMoeProfile = {
+  maxContext: number
+  maxBatchSize: number
+}
+
+const UNIFIED_MEMORY_MOE_PROFILES: Array<{
+  pattern: string
+  profile: UnifiedMemoryMoeProfile
+}> = [
+  {
+    pattern: 'qwen3635ba3b',
+    profile: {
+      maxContext: 2048,
+      maxBatchSize: 32,
+    },
+  },
+  {
+    pattern: 'gemma426ba4b',
+    profile: {
+      maxContext: 3072,
+      maxBatchSize: 48,
+    },
+  },
+]
+
+function getUnifiedMemoryMoeProfile(
+  modelId: string
+): UnifiedMemoryMoeProfile | null {
+  const normalizedModelId = modelId.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const match = UNIFIED_MEMORY_MOE_PROFILES.find(({ pattern }) =>
+    normalizedModelId.includes(pattern)
+  )
+  return match?.profile ?? null
+}
+
 export class DefaultModelsService implements ModelsService {
   private getEngine(provider: string = defaultProvider) {
     return EngineManager.instance().get(provider) as AIEngine | undefined
@@ -400,13 +435,23 @@ export class DefaultModelsService implements ModelsService {
         }
 
         if (plan) {
+          const unifiedMemoryMoeProfile =
+            plan.is_moe && plan.is_unified_memory
+              ? getUnifiedMemoryMoeProfile(model)
+              : null
           const recommendedContext =
             plan.is_moe && plan.is_unified_memory
-              ? Math.min(plan.recommended_context_size, 4096)
+              ? Math.min(
+                  plan.recommended_context_size,
+                  unifiedMemoryMoeProfile?.maxContext ?? 4096
+                )
               : plan.recommended_context_size
           const recommendedBatchSize =
             plan.is_moe && plan.is_unified_memory
-              ? Math.min(plan.recommended_batch_size, 64)
+              ? Math.min(
+                  plan.recommended_batch_size,
+                  unifiedMemoryMoeProfile?.maxBatchSize ?? 64
+                )
               : plan.recommended_batch_size
           const currentContext = Number(settings.ctx_size ?? 8192)
           const currentBatchSize = Number(settings.batch_size ?? 2048)

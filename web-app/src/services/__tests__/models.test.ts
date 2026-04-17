@@ -418,6 +418,114 @@ describe('DefaultModelsService', () => {
       )
     })
 
+    it('should use the stricter Qwen3.6-35B-A3B unified-memory profile', async () => {
+      const provider = {
+        provider: 'llamacpp',
+        models: [
+          {
+            id: 'unsloth/Qwen3_6-35B-A3B-UD-Q4_K_M',
+            settings: {
+              ctx_len: { controller_props: { value: 8192 } },
+              batch_size: { controller_props: { value: 2048 } },
+              no_kv_offload: { controller_props: { value: false } },
+            },
+          },
+        ],
+      } as any
+      const mockSession = { id: 'session1' }
+
+      mockEngine.getLoadedModels.mockResolvedValue({
+        includes: () => false,
+      })
+      mockEngine.get.mockResolvedValue({
+        id: 'unsloth/Qwen3_6-35B-A3B-UD-Q4_K_M',
+        path: '/path/to/model.gguf',
+        sizeBytes: 23033812672,
+      })
+      mockEngine.planModelLoad.mockResolvedValue({
+        status: 'GREEN',
+        is_moe: true,
+        is_unified_memory: true,
+        recommended_context_size: 6144,
+        maximum_context_size: 8192,
+        recommended_batch_size: 64,
+        recommended_no_kv_offload: true,
+        summary: 'Fits with conservative MoE settings.',
+      })
+      mockEngine.load.mockResolvedValue(mockSession)
+
+      const result = await modelsService.startModel(
+        provider,
+        'unsloth/Qwen3_6-35B-A3B-UD-Q4_K_M'
+      )
+
+      expect(result).toEqual(mockSession)
+      expect(mockEngine.load).toHaveBeenCalledWith(
+        'unsloth/Qwen3_6-35B-A3B-UD-Q4_K_M',
+        expect.objectContaining({
+          ctx_size: 2048,
+          batch_size: 32,
+          no_kv_offload: true,
+        }),
+        false,
+        false
+      )
+    })
+
+    it('should use the gemma-4-26B-A4B unified-memory profile', async () => {
+      const provider = {
+        provider: 'llamacpp',
+        models: [
+          {
+            id: 'unsloth/gemma-4-26B-A4B-it-UD-Q4_K_XL',
+            settings: {
+              ctx_len: { controller_props: { value: 8192 } },
+              batch_size: { controller_props: { value: 2048 } },
+              no_kv_offload: { controller_props: { value: false } },
+            },
+          },
+        ],
+      } as any
+      const mockSession = { id: 'session1' }
+
+      mockEngine.getLoadedModels.mockResolvedValue({
+        includes: () => false,
+      })
+      mockEngine.get.mockResolvedValue({
+        id: 'unsloth/gemma-4-26B-A4B-it-UD-Q4_K_XL',
+        path: '/path/to/model.gguf',
+        sizeBytes: 18338074208,
+      })
+      mockEngine.planModelLoad.mockResolvedValue({
+        status: 'GREEN',
+        is_moe: true,
+        is_unified_memory: true,
+        recommended_context_size: 6144,
+        maximum_context_size: 8192,
+        recommended_batch_size: 128,
+        recommended_no_kv_offload: true,
+        summary: 'Fits with conservative MoE settings.',
+      })
+      mockEngine.load.mockResolvedValue(mockSession)
+
+      const result = await modelsService.startModel(
+        provider,
+        'unsloth/gemma-4-26B-A4B-it-UD-Q4_K_XL'
+      )
+
+      expect(result).toEqual(mockSession)
+      expect(mockEngine.load).toHaveBeenCalledWith(
+        'unsloth/gemma-4-26B-A4B-it-UD-Q4_K_XL',
+        expect.objectContaining({
+          ctx_size: 3072,
+          batch_size: 48,
+          no_kv_offload: true,
+        }),
+        false,
+        false
+      )
+    })
+
     it('should reject unsupported llamacpp loads when planner reports red with no viable context', async () => {
       const provider = {
         provider: 'llamacpp',
