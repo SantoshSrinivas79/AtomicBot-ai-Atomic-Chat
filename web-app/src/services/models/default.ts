@@ -22,6 +22,7 @@ import type {
   HuggingFaceRepo,
   CatalogModel,
   ModelValidationResult,
+  ModelLoadPlan,
 } from './types'
 
 // TODO: Replace this with the actual provider later
@@ -376,6 +377,55 @@ export class DefaultModelsService implements ModelsService {
         )
       : undefined
 
+    if (provider.provider === 'llamacpp') {
+      const modelInfo = await this.getModel(model)
+      const modelPath = modelInfo?.path
+
+      if (modelPath && settings) {
+        const requestedContext =
+          typeof settings.ctx_size === 'number'
+            ? settings.ctx_size
+            : typeof settings.ctx_size === 'string'
+              ? parseInt(settings.ctx_size, 10)
+              : 8192
+
+        const plan = await this.planModelLoad(modelPath, requestedContext)
+
+        if (plan?.status === 'RED' && plan.maximum_context_size === 0) {
+          throw new Error(plan.summary)
+        }
+
+        if (plan) {
+          const currentContext = Number(settings.ctx_size ?? 8192)
+          const currentBatchSize = Number(settings.batch_size ?? 2048)
+          const currentContextIsDefault =
+            !Number.isFinite(currentContext) || currentContext === 8192
+          const currentBatchIsDefault =
+            !Number.isFinite(currentBatchSize) || currentBatchSize === 2048
+
+          if (
+            plan.recommended_context_size > 0 &&
+            (currentContextIsDefault ||
+              (plan.maximum_context_size > 0 &&
+                currentContext > plan.maximum_context_size))
+          ) {
+            settings.ctx_size = plan.recommended_context_size
+          }
+
+          if (plan.recommended_batch_size > 0 && currentBatchIsDefault) {
+            settings.batch_size = plan.recommended_batch_size
+          }
+
+          if (
+            plan.recommended_no_kv_offload &&
+            (settings.no_kv_offload == null || settings.no_kv_offload === false)
+          ) {
+            settings.no_kv_offload = true
+          }
+        }
+      }
+    }
+
     return engine
       .load(model, settings, false, bypassAutoUnload)
       .catch((error) => {
@@ -537,6 +587,25 @@ export class DefaultModelsService implements ModelsService {
     } catch (error) {
       console.error(`Error checking model support for ${modelPath}:`, error)
       return 'GREY' // Error state, assume not supported
+    }
+  }
+
+  async planModelLoad(
+    modelPath: string,
+    ctxSize?: number
+  ): Promise<ModelLoadPlan | null> {
+    try {
+      const engine = this.getEngine('llamacpp') as AIEngine & {
+        planModelLoad?: (path: string, ctx_size?: number) => Promise<ModelLoadPlan>
+      }
+      if (engine && typeof engine.planModelLoad === 'function') {
+        return await engine.planModelLoad(modelPath, ctxSize)
+      }
+      console.warn('planModelLoad method not available in llamacpp engine')
+      return null
+    } catch (error) {
+      console.error(`Error planning model load for ${modelPath}:`, error)
+      return null
     }
   }
 

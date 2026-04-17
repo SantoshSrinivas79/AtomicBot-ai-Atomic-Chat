@@ -7,6 +7,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useServiceHub } from '@/hooks/useServiceHub'
+import type { ModelLoadPlan } from '@/services/models/types'
 
 interface ModelSupportStatusProps {
   modelId: string | undefined
@@ -21,17 +22,17 @@ export const ModelSupportStatus = ({
   contextSize,
   className,
 }: ModelSupportStatusProps) => {
+  const [loadPlan, setLoadPlan] = useState<ModelLoadPlan | null>(null)
   const [modelSupportStatus, setModelSupportStatus] = useState<
     'RED' | 'YELLOW' | 'GREEN' | 'LOADING' | null | 'GREY'
   >(null)
   const serviceHub = useServiceHub()
 
-  // Helper function to check model support with proper path resolution
-  const checkModelSupportWithPath = useCallback(
+  const planModelLoadWithPath = useCallback(
     async (
       id: string,
       ctxSize: number
-    ): Promise<'RED' | 'YELLOW' | 'GREEN' | 'GREY' | null> => {
+    ): Promise<ModelLoadPlan | null> => {
       try {
         const model = await serviceHub.models().getModel(id)
         if (!model?.path) {
@@ -39,13 +40,9 @@ export const ModelSupportStatus = ({
           return null
         }
 
-        return await serviceHub.models().isModelSupported(model.path, ctxSize)
+        return await serviceHub.models().planModelLoad(model.path, ctxSize)
       } catch (error) {
-        console.error(
-          'Error checking model support with path resolution:',
-          error
-        )
-        // If path construction or model support check fails, assume not supported
+        console.error('Error planning model load with path resolution:', error)
         return null
       }
     },
@@ -70,6 +67,9 @@ export const ModelSupportStatus = ({
 
   // Helper function to get tooltip text based on model support status
   const getStatusTooltip = (): string => {
+    if (loadPlan?.summary) {
+      return loadPlan.summary
+    }
     switch (modelSupportStatus) {
       case 'GREEN':
         return `Works Well on your device (ctx: ${contextSize})`
@@ -90,24 +90,28 @@ export const ModelSupportStatus = ({
       if (modelId && provider === 'llamacpp') {
         // Set loading state immediately
         setModelSupportStatus('LOADING')
+        setLoadPlan(null)
         try {
-          const supportStatus = await checkModelSupportWithPath(
+          const plan = await planModelLoadWithPath(
             modelId,
             contextSize
           )
-          setModelSupportStatus(supportStatus)
+          setLoadPlan(plan)
+          setModelSupportStatus(plan?.status ?? null)
         } catch (error) {
           console.error('Error checking model support:', error)
+          setLoadPlan(null)
           setModelSupportStatus('RED')
         }
       } else {
         // Only show status for llamacpp models since isModelSupported is specific to llamacpp
+        setLoadPlan(null)
         setModelSupportStatus(null)
       }
     }
 
     checkModelSupport()
-  }, [modelId, provider, contextSize, checkModelSupportWithPath])
+  }, [modelId, provider, contextSize, planModelLoadWithPath])
 
   // Don't render anything if no status or not llamacpp
   if (!modelSupportStatus || provider !== 'llamacpp') {
@@ -129,7 +133,22 @@ export const ModelSupportStatus = ({
           />
         </TooltipTrigger>
         <TooltipContent>
-          <p>{getStatusTooltip()}</p>
+          <div className="max-w-xs space-y-2">
+            <p>{getStatusTooltip()}</p>
+            {loadPlan && (
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p>
+                  Recommended context: {loadPlan.recommended_context_size}
+                </p>
+                <p>
+                  Recommended batch size: {loadPlan.recommended_batch_size}
+                </p>
+                {loadPlan.warnings.slice(0, 2).map((warning) => (
+                  <p key={warning}>{warning}</p>
+                ))}
+              </div>
+            )}
+          </div>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

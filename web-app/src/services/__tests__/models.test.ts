@@ -35,6 +35,7 @@ describe('DefaultModelsService', () => {
   let modelsService: DefaultModelsService
 
   const mockEngine = {
+    get: vi.fn(),
     list: vi.fn(),
     updateSettings: vi.fn(),
     update: vi.fn(),
@@ -45,6 +46,7 @@ describe('DefaultModelsService', () => {
     unload: vi.fn(),
     load: vi.fn(),
     isModelSupported: vi.fn(),
+    planModelLoad: vi.fn(),
     isToolSupported: vi.fn(),
     checkMmprojExists: vi.fn(),
   }
@@ -309,6 +311,90 @@ describe('DefaultModelsService', () => {
       await expect(modelsService.startModel(provider, model)).resolves.toBe(
         undefined
       )
+    })
+
+    it('should apply planner recommendations for llamacpp defaults', async () => {
+      const provider = {
+        provider: 'llamacpp',
+        models: [
+          {
+            id: 'model1',
+            settings: {
+              ctx_len: { controller_props: { value: 8192 } },
+              batch_size: { controller_props: { value: 2048 } },
+              no_kv_offload: { controller_props: { value: false } },
+            },
+          },
+        ],
+      } as any
+      const mockSession = { id: 'session1' }
+
+      mockEngine.getLoadedModels.mockResolvedValue({
+        includes: () => false,
+      })
+      mockEngine.get.mockResolvedValue({
+        id: 'model1',
+        path: '/path/to/model.gguf',
+      })
+      mockEngine.planModelLoad.mockResolvedValue({
+        status: 'YELLOW',
+        recommended_context_size: 4096,
+        maximum_context_size: 6144,
+        recommended_batch_size: 128,
+        recommended_no_kv_offload: true,
+        summary: 'Use conservative settings.',
+      })
+      mockEngine.load.mockResolvedValue(mockSession)
+
+      const result = await modelsService.startModel(provider, 'model1')
+
+      expect(result).toEqual(mockSession)
+      expect(mockEngine.planModelLoad).toHaveBeenCalledWith(
+        '/path/to/model.gguf',
+        8192
+      )
+      expect(mockEngine.load).toHaveBeenCalledWith(
+        'model1',
+        expect.objectContaining({
+          ctx_size: 4096,
+          batch_size: 128,
+          no_kv_offload: true,
+        }),
+        false,
+        false
+      )
+    })
+
+    it('should reject unsupported llamacpp loads when planner reports red with no viable context', async () => {
+      const provider = {
+        provider: 'llamacpp',
+        models: [
+          {
+            id: 'model1',
+            settings: {
+              ctx_len: { controller_props: { value: 8192 } },
+            },
+          },
+        ],
+      } as any
+
+      mockEngine.getLoadedModels.mockResolvedValue({
+        includes: () => false,
+      })
+      mockEngine.get.mockResolvedValue({
+        id: 'model1',
+        path: '/path/to/model.gguf',
+      })
+      mockEngine.planModelLoad.mockResolvedValue({
+        status: 'RED',
+        maximum_context_size: 0,
+        summary: 'Model does not fit in the current memory budget.',
+      })
+
+      await expect(modelsService.startModel(provider, 'model1')).rejects.toThrow(
+        'Model does not fit in the current memory budget.'
+      )
+      expect(mockEngine.load).not.toHaveBeenCalled()
     })
   })
 
@@ -911,6 +997,37 @@ describe('DefaultModelsService', () => {
       expect(result.downloads).toBe(0)
       expect(result.description).toBe('**Tags**: ')
       expect(result.quants[0].file_size).toBe('Unknown size')
+    })
+  })
+
+  describe('planModelLoad', () => {
+    it('should return planner output when available', async () => {
+      const plan = {
+        status: 'GREEN',
+        recommended_context_size: 8192,
+        recommended_batch_size: 256,
+        warnings: [],
+      }
+      mockEngine.planModelLoad.mockResolvedValue(plan)
+
+      const result = await modelsService.planModelLoad('/path/to/model.gguf', 8192)
+
+      expect(result).toEqual(plan)
+      expect(mockEngine.planModelLoad).toHaveBeenCalledWith(
+        '/path/to/model.gguf',
+        8192
+      )
+    })
+
+    it('should return null when planner is unavailable', async () => {
+      mockEngineManager.get.mockReturnValue({
+        ...mockEngine,
+        planModelLoad: undefined,
+      })
+
+      const result = await modelsService.planModelLoad('/path/to/model.gguf', 4096)
+
+      expect(result).toBeNull()
     })
   })
 
