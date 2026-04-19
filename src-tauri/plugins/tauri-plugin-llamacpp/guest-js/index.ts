@@ -4,6 +4,7 @@ import {
   DeviceInfo,
   UnloadResult,
   GgufMetadata,
+  ModelLoadPlan,
   LlamacppConfig,
   BackendVersion,
   BackendFeatures,
@@ -188,6 +189,18 @@ export async function isModelSupported(
   return await invoke('plugin:llamacpp|is_model_supported', {
     path,
     ctxSize,
+  })
+}
+
+export async function planModelLoad(
+  path: string,
+  ctxSize?: number,
+  totalModelBytes?: number
+): Promise<ModelLoadPlan> {
+  return await invoke('plugin:llamacpp|plan_model_load', {
+    path,
+    ctxSize,
+    totalModelBytes,
   })
 }
 

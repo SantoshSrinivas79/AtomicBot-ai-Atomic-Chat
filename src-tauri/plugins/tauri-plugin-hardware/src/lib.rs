@@ -15,7 +15,7 @@ use tauri::Runtime;
 /// (GPU detection can return empty until the driver is ready again).
 static SYSTEM_INFO: RwLock<Option<SystemInfo>> = RwLock::new(None);
 
-pub use commands::get_system_info;
+pub use commands::{get_system_info, get_system_usage};
 
 /// Initialize the hardware plugin
 pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {

@@ -81,7 +81,7 @@ impl serde::Serialize for KVCacheError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ModelSupportStatus {
     #[serde(rename = "RED")]
     Red,
@@ -89,4 +89,26 @@ pub enum ModelSupportStatus {
     Yellow,
     #[serde(rename = "GREEN")]
     Green,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelLoadPlan {
+    pub status: ModelSupportStatus,
+    pub is_unified_memory: bool,
+    pub is_moe: bool,
+    pub requested_context_size: u64,
+    pub recommended_context_size: u64,
+    pub maximum_context_size: u64,
+    pub recommended_batch_size: u32,
+    pub recommended_no_kv_offload: bool,
+    pub model_size: u64,
+    pub requested_kv_cache_size: u64,
+    pub recommended_kv_cache_size: u64,
+    pub estimated_total_required: u64,
+    pub recommended_total_required: u64,
+    pub currently_used_memory: u64,
+    pub available_memory: u64,
+    pub memory_headroom: i64,
+    pub summary: String,
+    pub warnings: Vec<String>,
 }

@@ -45,6 +45,7 @@ import {
   readGgufMetadata,
   getModelSize,
   isModelSupported,
+  planModelLoad,
   unloadLlamaModel,
   LlamacppConfig,
   DownloadItem,
@@ -2489,6 +2490,18 @@ export default class llamacpp_extension extends AIEngine {
     try {
       const result = await isModelSupported(path, Number(ctxSize))
       return result
+    } catch (e) {
+      throw new Error(String(e))
+    }
+  }
+
+  async planModelLoad(
+    path: string,
+    ctxSize?: number,
+    totalModelBytes?: number
+  ): Promise<Awaited<ReturnType<typeof planModelLoad>>> {
+    try {
+      return await planModelLoad(path, Number(ctxSize), totalModelBytes)
     } catch (e) {
       throw new Error(String(e))
     }

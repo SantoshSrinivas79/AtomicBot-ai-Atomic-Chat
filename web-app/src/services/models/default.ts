@@ -22,10 +22,46 @@ import type {
   HuggingFaceRepo,
   CatalogModel,
   ModelValidationResult,
+  ModelLoadPlan,
 } from './types'
 
 // TODO: Replace this with the actual provider later
 const defaultProvider = 'llamacpp'
+
+type UnifiedMemoryMoeProfile = {
+  maxContext: number
+  maxBatchSize: number
+}
+
+const UNIFIED_MEMORY_MOE_PROFILES: Array<{
+  pattern: string
+  profile: UnifiedMemoryMoeProfile
+}> = [
+  {
+    pattern: 'qwen3635ba3b',
+    profile: {
+      maxContext: 2048,
+      maxBatchSize: 32,
+    },
+  },
+  {
+    pattern: 'gemma426ba4b',
+    profile: {
+      maxContext: 3072,
+      maxBatchSize: 48,
+    },
+  },
+]
+
+function getUnifiedMemoryMoeProfile(
+  modelId: string
+): UnifiedMemoryMoeProfile | null {
+  const normalizedModelId = modelId.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const match = UNIFIED_MEMORY_MOE_PROFILES.find(({ pattern }) =>
+    normalizedModelId.includes(pattern)
+  )
+  return match?.profile ?? null
+}
 
 export class DefaultModelsService implements ModelsService {
   private getEngine(provider: string = defaultProvider) {
@@ -376,6 +412,77 @@ export class DefaultModelsService implements ModelsService {
         )
       : undefined
 
+    if (provider.provider === 'llamacpp') {
+      const modelInfo = await this.getModel(model)
+      const modelPath = modelInfo?.path
+
+      if (modelPath && settings) {
+        const requestedContext =
+          typeof settings.ctx_size === 'number'
+            ? settings.ctx_size
+            : typeof settings.ctx_size === 'string'
+              ? parseInt(settings.ctx_size, 10)
+              : 8192
+
+        const plan = await this.planModelLoad(
+          modelPath,
+          requestedContext,
+          modelInfo?.sizeBytes
+        )
+
+        if (plan?.status === 'RED' && plan.maximum_context_size === 0) {
+          throw new Error(plan.summary)
+        }
+
+        if (plan) {
+          const unifiedMemoryMoeProfile =
+            plan.is_moe && plan.is_unified_memory
+              ? getUnifiedMemoryMoeProfile(model)
+              : null
+          const recommendedContext =
+            plan.is_moe && plan.is_unified_memory
+              ? Math.min(
+                  plan.recommended_context_size,
+                  unifiedMemoryMoeProfile?.maxContext ?? 4096
+                )
+              : plan.recommended_context_size
+          const recommendedBatchSize =
+            plan.is_moe && plan.is_unified_memory
+              ? Math.min(
+                  plan.recommended_batch_size,
+                  unifiedMemoryMoeProfile?.maxBatchSize ?? 64
+                )
+              : plan.recommended_batch_size
+          const currentContext = Number(settings.ctx_size ?? 8192)
+          const currentBatchSize = Number(settings.batch_size ?? 2048)
+          const currentContextIsDefault =
+            !Number.isFinite(currentContext) || currentContext === 8192
+          const currentBatchIsDefault =
+            !Number.isFinite(currentBatchSize) || currentBatchSize === 2048
+
+          if (
+            recommendedContext > 0 &&
+            (currentContextIsDefault ||
+              (plan.maximum_context_size > 0 &&
+                currentContext > plan.maximum_context_size))
+          ) {
+            settings.ctx_size = recommendedContext
+          }
+
+          if (recommendedBatchSize > 0 && currentBatchIsDefault) {
+            settings.batch_size = recommendedBatchSize
+          }
+
+          if (
+            plan.recommended_no_kv_offload &&
+            (settings.no_kv_offload == null || settings.no_kv_offload === false)
+          ) {
+            settings.no_kv_offload = true
+          }
+        }
+      }
+    }
+
     return engine
       .load(model, settings, false, bypassAutoUnload)
       .catch((error) => {
@@ -537,6 +644,30 @@ export class DefaultModelsService implements ModelsService {
     } catch (error) {
       console.error(`Error checking model support for ${modelPath}:`, error)
       return 'GREY' // Error state, assume not supported
+    }
+  }
+
+  async planModelLoad(
+    modelPath: string,
+    ctxSize?: number,
+    totalModelBytes?: number
+  ): Promise<ModelLoadPlan | null> {
+    try {
+      const engine = this.getEngine('llamacpp') as AIEngine & {
+        planModelLoad?: (
+          path: string,
+          ctx_size?: number,
+          total_model_bytes?: number
+        ) => Promise<ModelLoadPlan>
+      }
+      if (engine && typeof engine.planModelLoad === 'function') {
+        return await engine.planModelLoad(modelPath, ctxSize, totalModelBytes)
+      }
+      console.warn('planModelLoad method not available in llamacpp engine')
+      return null
+    } catch (error) {
+      console.error(`Error planning model load for ${modelPath}:`, error)
+      return null
     }
   }
 

@@ -92,6 +92,27 @@ export interface ModelValidationResult {
   metadata?: GgufMetadata
 }
 
+export interface ModelLoadPlan {
+  status: 'RED' | 'YELLOW' | 'GREEN'
+  is_unified_memory: boolean
+  is_moe: boolean
+  requested_context_size: number
+  recommended_context_size: number
+  maximum_context_size: number
+  recommended_batch_size: number
+  recommended_no_kv_offload: boolean
+  model_size: number
+  requested_kv_cache_size: number
+  recommended_kv_cache_size: number
+  estimated_total_required: number
+  recommended_total_required: number
+  currently_used_memory: number
+  available_memory: number
+  memory_headroom: number
+  summary: string
+  warnings: string[]
+}
+
 
 export type PreflightReason =
   | 'AUTH_REQUIRED'
@@ -151,6 +172,11 @@ export interface ModelsService {
     modelPath: string,
     ctxSize?: number
   ): Promise<'RED' | 'YELLOW' | 'GREEN' | 'GREY'>
+  planModelLoad(
+    modelPath: string,
+    ctxSize?: number,
+    totalModelBytes?: number
+  ): Promise<ModelLoadPlan | null>
   validateGgufFile(filePath: string): Promise<ModelValidationResult>
   getTokensCount(modelId: string, messages: ThreadMessage[]): Promise<number>
 }
