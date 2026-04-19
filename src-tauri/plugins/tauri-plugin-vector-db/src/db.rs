@@ -6,6 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileMetadata {
     pub name: Option<String>,

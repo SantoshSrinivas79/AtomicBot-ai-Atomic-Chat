@@ -38,11 +38,17 @@ pub fn get_active_extensions<R: Runtime>(app: AppHandle<R>) -> Vec<serde_json::V
                 Ok(exts) => exts
                     .into_iter()
                     .map(|ext| {
+                        let is_active = ext
+                            .get("active")
+                            .and_then(|v| v.as_bool())
+                            .or_else(|| ext.get("_active").and_then(|v| v.as_bool()))
+                            .unwrap_or(true);
+
                         serde_json::json!({
                             "url": ext["url"],
                             "name": ext["name"],
                             "productName": ext["productName"],
-                            "active": ext["_active"],
+                            "active": is_active,
                             "description": ext["description"],
                             "version": ext["version"]
                         })

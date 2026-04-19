@@ -524,8 +524,16 @@ export default class llamacpp_extension extends AIEngine {
 
         backendSetting.controllerProps.value = initialUiDefault
         logger.info(
-          `Initial UI default for version_backend set to: ${initialUiDefault}`
+          `Initial UI selected version_backend value: ${initialUiDefault}`
         )
+        if (
+          bestAvailableBackendString &&
+          bestAvailableBackendString !== initialUiDefault
+        ) {
+          logger.info(
+            `Recommended backend remains: ${bestAvailableBackendString}`
+          )
+        }
       } else {
         logger.error(
           'Critical setting "version_backend" definition not found in SETTINGS.'

@@ -375,14 +375,15 @@ pub async fn is_model_supported(
         kv_cache_size
     );
 
-    let total_system_memory: u64 = match system_info.gpus.is_empty() {
-        // on MacOS with unified memory, treat RAM = 0 for now
+    let unified_memory = system_info.gpus.is_empty();
+    let total_system_memory: u64 = match unified_memory {
+        // Avoid double-counting shared memory in the fit calculation below.
         true => 0,
         false => system_info.total_memory * 1024 * 1024,
     };
 
     // Calculate total VRAM from all GPUs
-    let total_vram: u64 = match system_info.gpus.is_empty() {
+    let total_vram: u64 = match unified_memory {
         // On macOS with unified memory, GPU info may be empty
         // Use total RAM as VRAM since memory is shared
         true => {
@@ -409,7 +410,14 @@ pub async fn is_model_supported(
     } else {
         usable_vram
     };
-    log::info!("System RAM: {} bytes", &total_system_memory);
+    if unified_memory {
+        log::info!(
+            "Unified memory mode: host RAM is treated as shared VRAM for fit checks (physical RAM: {} bytes)",
+            system_info.total_memory * 1024 * 1024
+        );
+    } else {
+        log::info!("System RAM: {} bytes", &total_system_memory);
+    }
     log::info!("Total VRAM: {} bytes", &total_vram);
     log::info!("Usable total memory: {} bytes", &usable_total_memory);
     log::info!("Usable VRAM: {} bytes", &usable_vram);

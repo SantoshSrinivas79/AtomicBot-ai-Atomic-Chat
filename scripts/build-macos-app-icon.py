@@ -5,7 +5,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PIL import Image
+try:
+    from PIL import Image
+except ModuleNotFoundError as exc:
+    print(
+        "Missing Python dependency 'Pillow'. Recommended fix: "
+        "`python3 -m venv .venv-dev && .venv-dev/bin/pip install pillow`, "
+        "then rerun the dev command.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from exc
 
 ROOT = Path(__file__).resolve().parent.parent
 LOGO_APP_PATH = ROOT / "web-app" / "public" / "images" / "logo-app.png"

@@ -125,6 +125,7 @@ pub fn install_extensions<R: Runtime>(app: tauri::AppHandle<R>, force: bool) -> 
                 "name": extension_name.clone(),
                 "origin": extension_dir.to_string_lossy(),
                 "active": true,
+                "_active": true,
                 "description": extension_manifest
                     .as_ref()
                     .and_then(|manifest| manifest["description"].as_str())
