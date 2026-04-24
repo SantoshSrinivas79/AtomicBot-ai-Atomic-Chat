@@ -8,6 +8,7 @@ interface AssistantState {
   currentAssistant: Assistant | null
   defaultAssistantId: string
   addAssistant: (assistant: Assistant) => void
+  cloneAssistant: (id: string) => Assistant | null
   updateAssistant: (assistant: Assistant) => void
   deleteAssistant: (id: string) => void
   setCurrentAssistant: (assistant: Assistant, saveToStorage?: boolean) => void
@@ -35,6 +36,32 @@ const setLastUsedAssistantId = (assistantId: string) => {
     console.debug('Failed to set last used assistant in localStorage:', error)
   }
 }
+
+const getClonedAssistantName = (
+  sourceName: string,
+  assistants: Assistant[]
+): string => {
+  const existingNames = new Set(assistants.map((assistant) => assistant.name))
+  const baseName = `${sourceName} Copy`
+
+  if (!existingNames.has(baseName)) {
+    return baseName
+  }
+
+  let copyIndex = 2
+  let candidateName = `${sourceName} Copy ${copyIndex}`
+
+  while (existingNames.has(candidateName)) {
+    copyIndex += 1
+    candidateName = `${sourceName} Copy ${copyIndex}`
+  }
+
+  return candidateName
+}
+
+const createAssistantId = (): string =>
+  globalThis.crypto?.randomUUID?.() ??
+  Math.random().toString(36).substring(2)
 
 export const defaultAssistant: Assistant = {
   id: 'jan',
@@ -114,6 +141,22 @@ export const useAssistant = create<AssistantState>((set, get) => ({
       .catch((error) => {
         console.error('Failed to create assistant:', error)
       })
+  },
+  cloneAssistant: (id) => {
+    const sourceAssistant = get().assistants.find((assistant) => assistant.id === id)
+    if (!sourceAssistant) {
+      return null
+    }
+
+    const clonedAssistant: Assistant = {
+      ...sourceAssistant,
+      id: createAssistantId(),
+      name: getClonedAssistantName(sourceAssistant.name, get().assistants),
+      created_at: Date.now(),
+    }
+
+    get().addAssistant(clonedAssistant)
+    return clonedAssistant
   },
   updateAssistant: (assistant) => {
     const state = get()

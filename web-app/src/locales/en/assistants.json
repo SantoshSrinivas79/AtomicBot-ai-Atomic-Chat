@@ -1,6 +1,7 @@
 {
   "title": "Assistants",
   "editAssistant": "Edit Assistant",
+  "cloneAssistant": "Clone Assistant",
   "deleteAssistant": "Delete Assistant",
   "deleteConfirmation": "Delete Assistant",
   "deleteConfirmationDesc": "Are you sure you want to delete this assistant? This action cannot be undone.",

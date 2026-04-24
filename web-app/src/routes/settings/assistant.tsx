@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { useAssistant } from '@/hooks/useAssistant'
 
 import HeaderPage from '@/containers/HeaderPage'
-import { IconCirclePlus, IconPencil, IconTrash } from '@tabler/icons-react'
+import { IconCirclePlus, IconCopy, IconPencil, IconTrash } from '@tabler/icons-react'
 import AddEditAssistant from '@/containers/dialogs/AddEditAssistant'
 import { DeleteAssistantDialog } from '@/containers/dialogs'
 import { AvatarEmoji } from '@/containers/AvatarEmoji'
@@ -29,7 +29,7 @@ export const Route = createFileRoute(route.settings.assistant as any)({
 
 function AssistantContent() {
   const { t } = useTranslation()
-  const { assistants, addAssistant, updateAssistant, deleteAssistant, defaultAssistantId, setDefaultAssistant } =
+  const { assistants, addAssistant, cloneAssistant, updateAssistant, deleteAssistant, defaultAssistantId, setDefaultAssistant } =
     useAssistant()
   const [open, setOpen] = useState(false)
   const [editingKey, setEditingKey] = useState<string | null>(null)
@@ -150,6 +150,14 @@ function AssistantContent() {
                     )}
                   </div>
                   <div className="flex items-center shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      title={t('assistants:cloneAssistant')}
+                      onClick={() => cloneAssistant(assistant.id)}
+                    >
+                      <IconCopy className="text-muted-foreground size-4" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon-xs"

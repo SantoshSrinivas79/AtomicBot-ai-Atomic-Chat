@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
+import type { Assistant } from '@janhq/core'
 import { useAssistant, defaultAssistant } from '../useAssistant'
 
 // Mock the services
@@ -184,5 +185,68 @@ describe('useAssistant', () => {
     expect(result.current.currentAssistant.name).toBe(
       'Updated Atomic Chat Name'
     )
+  })
+
+  it('should clone assistant with a new id and copied settings', () => {
+    const { result } = renderHook(() => useAssistant())
+
+    const sourceAssistant = {
+      id: 'assistant-2',
+      name: 'Research Assistant',
+      avatar: '🤖',
+      description: 'Finds information',
+      instructions: 'Search carefully',
+      created_at: 12345,
+      parameters: { temperature: 0.2, top_p: 0.9 },
+    }
+
+    act(() => {
+      result.current.addAssistant(sourceAssistant)
+    })
+
+    let clonedAssistant: Assistant | null = null
+    act(() => {
+      clonedAssistant = result.current.cloneAssistant(sourceAssistant.id)
+    })
+
+    expect(clonedAssistant).not.toBeNull()
+    expect(result.current.assistants).toHaveLength(3)
+    expect(clonedAssistant?.id).not.toBe(sourceAssistant.id)
+    expect(clonedAssistant?.name).toBe('Research Assistant Copy')
+    expect(clonedAssistant?.description).toBe(sourceAssistant.description)
+    expect(clonedAssistant?.instructions).toBe(sourceAssistant.instructions)
+    expect(clonedAssistant?.parameters).toEqual(sourceAssistant.parameters)
+    expect(clonedAssistant?.avatar).toBe(sourceAssistant.avatar)
+    expect(clonedAssistant?.created_at).not.toBe(sourceAssistant.created_at)
+  })
+
+  it('should increment clone names when copies already exist', () => {
+    const { result } = renderHook(() => useAssistant())
+
+    const sourceAssistant = {
+      id: 'assistant-2',
+      name: 'Research Assistant',
+      avatar: '🤖',
+      description: 'Finds information',
+      instructions: 'Search carefully',
+      created_at: 12345,
+      parameters: {},
+    }
+
+    act(() => {
+      result.current.addAssistant(sourceAssistant)
+      result.current.addAssistant({
+        ...sourceAssistant,
+        id: 'assistant-3',
+        name: 'Research Assistant Copy',
+      })
+    })
+
+    let clonedAssistant: Assistant | null = null
+    act(() => {
+      clonedAssistant = result.current.cloneAssistant(sourceAssistant.id)
+    })
+
+    expect(clonedAssistant?.name).toBe('Research Assistant Copy 2')
   })
 })
