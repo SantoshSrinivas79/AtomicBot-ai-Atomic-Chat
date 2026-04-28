@@ -86,6 +86,17 @@ For local macOS bundles, use `start.sh`:
 ./start.sh --prefer-jan-models --jan-data-folder "/Users/you/Library/Application Support/Jan/data"
 ```
 
+For development from this repo:
+
+```bash
+./start.sh --dev
+./start.sh --dev-full
+```
+
+- `./start.sh --dev` starts the fast desktop development workflow. Use this for day-to-day frontend and app work.
+- `./start.sh --dev-full` starts the heavier Tauri workflow. It now rebuilds `web-app/dist` automatically when your web sources are newer than the existing build, so it does not silently run stale frontend code.
+- If you intentionally want a destructive clean reinstall of bundled extensions during Tauri dev, use `yarn dev:tauri:clean`.
+
 `--prefer-jan-models` makes Atomic Chat discover llama.cpp models from Jan first when they exist, then fall back to Atomic Chat's own local models. This avoids downloading the same GGUF models twice.
 
 You can also enable the same behavior in the llama.cpp extension settings:
